@@ -7,6 +7,8 @@ import {
   type Project, type Member, type Milestone, type Task, type RoadblockStatus, type ProjectStatus,
 } from "@/lib/types";
 
+const todayStr = () => new Date().toISOString().slice(0, 10);
+
 /* ─────────── status dropdown ─────────── */
 function StatusControl({
   value, onChange, disabled,
@@ -75,7 +77,7 @@ function StatusControl({
 /* ─────────── milestone with notes ─────────── */
 function MilestoneRow({
   m, total, index, members, depth = 0,
-  onToggle, onNote, onRename, onAssign, onDelete, onMove, onAddChild,
+  onToggle, onNote, onRename, onAssign, onDelete, onMove, onAddChild, onDueDate,
 }: {
   m: Milestone;
   total: number; index: number;
@@ -88,6 +90,7 @@ function MilestoneRow({
   onDelete: (id: string) => void;
   onMove: (id: string, direction: "up" | "down") => void;
   onAddChild: (parentId: string) => void;
+  onDueDate: (id: string, date: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState(m.note);
@@ -137,6 +140,12 @@ function MilestoneRow({
             )}
             {m.assignee && <span className="ms-person">{m.assignee.name.split(" ")[0]}</span>}
             {note && <span className="ms-hasnote">Note</span>}
+            {m.due_date && (
+              <span style={{
+                color: !m.done && m.due_date < todayStr() ? "var(--red)" : undefined,
+                fontWeight: !m.done && m.due_date < todayStr() ? 600 : 400,
+              }}>{m.due_date}</span>
+            )}
             {!isSub && <span>{index + 1}/{total}</span>}
             <span className="ms-car">▸</span>
           </span>
@@ -160,15 +169,30 @@ function MilestoneRow({
               onBlur={() => { if (name.trim() && name !== m.name) onRename(m.id, name.trim()); }}
             />
 
-            <label htmlFor={`assignee-${m.id}`}>Assigned to (optional)</label>
-            <select
-              id={`assignee-${m.id}`}
-              value={m.assignee?.id ?? ""}
-              onChange={(e) => onAssign(m.id, e.target.value || null)}
-            >
-              <option value="">No one</option>
-              {members.map((mem) => <option key={mem.id} value={mem.id}>{mem.name}</option>)}
-            </select>
+            <div className="fld-2" style={{ marginBottom: 12 }}>
+              <div>
+                <label htmlFor={`assignee-${m.id}`}>Assigned to (optional)</label>
+                <select
+                  id={`assignee-${m.id}`}
+                  value={m.assignee?.id ?? ""}
+                  onChange={(e) => onAssign(m.id, e.target.value || null)}
+                  style={{ width: "100%" }}
+                >
+                  <option value="">No one</option>
+                  {members.map((mem) => <option key={mem.id} value={mem.id}>{mem.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label htmlFor={`due-${m.id}`}>Due (optional)</label>
+                <input
+                  id={`due-${m.id}`}
+                  type="date"
+                  defaultValue={m.due_date ?? ""}
+                  onChange={(e) => onDueDate(m.id, e.target.value || null)}
+                  style={{ width: "100%" }}
+                />
+              </div>
+            </div>
 
             <label htmlFor={`note-${m.id}`}>Notes</label>
             <textarea
@@ -205,6 +229,7 @@ function MilestoneRow({
           onDelete={onDelete}
           onMove={onMove}
           onAddChild={onAddChild}
+          onDueDate={onDueDate}
         />
       ))}
     </>
@@ -438,6 +463,13 @@ export default function ProjectPanel({
       await api(`/api/milestones/${id}`, { method: "DELETE" });
       await refresh();
       toast("Milestone deleted.");
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function setMilestoneDue(id: string, date: string | null) {
+    try {
+      await api(`/api/milestones/${id}`, { method: "PATCH", body: { due_date: date } });
+      await refresh();
     } catch (e: any) { toast(e.message, "err"); }
   }
 
@@ -833,6 +865,7 @@ export default function ProjectPanel({
                 onDelete={deleteMilestone}
                 onMove={moveMilestone}
                 onAddChild={addSubMilestone}
+                onDueDate={setMilestoneDue}
               />
             ))}
           </div>

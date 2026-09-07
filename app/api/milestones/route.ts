@@ -24,7 +24,8 @@ export async function POST(req: Request) {
     position: (count ?? 0) + 1,
     name: body.name,
     note: body.note ?? "",
-  }).select("id, position, name, note, done, parent_id").single();
+    due_date: body.due_date ?? null,
+  }).select("id, position, name, note, done, parent_id, due_date").single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   return NextResponse.json(data, { status: 201 });

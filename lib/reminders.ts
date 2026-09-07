@@ -70,6 +70,23 @@ function taskMessage(t: any, daysLeft: number | null, url: string | null) {
   return url ? `${body}\n\nClose it here:\n${url}` : body;
 }
 
+function milestoneMessage(m: any, daysLeft: number | null, url: string | null) {
+  const p = m.projects;
+  let body: string;
+
+  if (daysLeft !== null && daysLeft < 0)
+    body = `*${p.title}* — milestone "${m.name}" was due ${m.due_date} and isn't marked complete. ` +
+           `Can you close it or tell me what's left?`;
+  else if (daysLeft === 0)
+    body = `*${p.title}* — milestone "${m.name}" is due today.`;
+  else if (daysLeft !== null)
+    body = `*${p.title}* — milestone "${m.name}" is due in ${daysLeft} day${daysLeft === 1 ? "" : "s"} (${m.due_date}).`;
+  else
+    body = `*${p.title}* — milestone "${m.name}" is still open. Any movement?`;
+
+  return url ? `${body}\n\nMark it complete here:\n${url}` : body;
+}
+
 function roadblockMessage(r: any, url: string | null) {
   const days = Math.floor(hoursSince(r.raised_at) / 24);
   const age = days < 1 ? "today" : `${days} day${days === 1 ? "" : "s"} ago`;
@@ -136,6 +153,40 @@ export async function runReminders() {
       }
     } catch (e: any) {
       failures.push(`task ${t.id}: ${e.message}`);
+    }
+  }
+
+  // ── Open milestones with a deadline ─────────────────
+  // Same escalating cadence as action items. Only milestones with both an
+  // assignee and a due date are chased; the rest are just checklist items.
+  const { data: mstones } = await db
+    .from("milestones")
+    .select(`
+      id, name, due_date, last_nudge_at, nudge_count,
+      assignee:team_members!milestones_assignee_id_fkey ( id, name, email ),
+      projects!inner ( id, title, reminders_on, archived )
+    `)
+    .eq("done", false)
+    .not("due_date", "is", null);
+
+  for (const m of (mstones ?? []) as any[]) {
+    if (!m.assignee?.email) continue;
+    if (!m.projects?.reminders_on || m.projects.archived) continue;
+
+    const daysLeft = daysUntil(m.due_date);
+    const wait = intervalHours(settings, daysLeft, false);
+    if (hoursSince(m.last_nudge_at) < wait) continue;
+
+    try {
+      const url = await ensureShareUrl(m.projects.id, m.assignee.id);
+      await cliqDM(m.assignee.email, milestoneMessage(m, daysLeft, url));
+      await db.from("milestones")
+        .update({ last_nudge_at: new Date().toISOString(), nudge_count: m.nudge_count + 1 })
+        .eq("id", m.id);
+      await log("cliq_dm", `Milestone reminder to ${m.assignee.name} — ${m.name}`, m.projects.id);
+      sent++;
+    } catch (e: any) {
+      failures.push(`milestone ${m.id}: ${e.message}`);
     }
   }
 

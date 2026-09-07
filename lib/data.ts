@@ -8,7 +8,7 @@ const SELECT = `
   owner:team_members!projects_owner_id_fkey ( id, name, email, active, job_position, account, site ),
   project_members ( team_members ( id, name, email, active, job_position, account, site ) ),
   milestones (
-    id, position, name, note, done, parent_id,
+    id, position, name, note, done, parent_id, due_date,
     assignee:team_members!milestones_assignee_id_fkey ( id, name, email, active, job_position, account, site )
   ),
   tasks (

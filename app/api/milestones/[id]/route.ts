@@ -16,6 +16,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   if ("note" in body) patch.note = body.note;
   if ("name" in body) patch.name = body.name;
   if ("assignee_id" in body) patch.assignee_id = body.assignee_id || null;
+  if ("due_date" in body) patch.due_date = body.due_date || null;
   if ("done" in body) {
     patch.done = body.done;
     patch.completed_at = body.done ? new Date().toISOString() : null;
@@ -24,7 +25,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   const table = body.subproject ? "subproject_milestones" : "milestones";
   const { data, error } = await db
     .from(table).update(patch).eq("id", params.id)
-    .select("id, position, name, note, done, assignee:team_members!milestones_assignee_id_fkey(id,name,email,active,job_position,account,site)").single();
+    .select("id, position, name, note, done, due_date, assignee:team_members!milestones_assignee_id_fkey(id,name,email,active,job_position,account,site)").single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 

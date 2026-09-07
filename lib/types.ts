@@ -28,6 +28,7 @@ export interface Milestone {
   id: string; position: number; name: string; note: string; done: boolean;
   assignee: Member | null;
   parent_id: string | null;
+  due_date: string | null;
   children: Milestone[];
 }
 export interface Roadblock {

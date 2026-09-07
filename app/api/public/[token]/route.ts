@@ -31,6 +31,7 @@ export async function GET(_: Request, { params }: { params: { token: string } })
       milestones: p.milestones.flatMap((m) => [
         {
           id: m.id, name: m.name, done: m.done, note: m.note,
+          due_date: m.due_date,
           assignee: m.assignee?.name ?? null,
           mine: m.assignee?.id === me,
           depth: 0,
@@ -43,6 +44,7 @@ export async function GET(_: Request, { params }: { params: { token: string } })
         // rendering and the "mine" highlighting work unchanged.
         ...(m.children ?? []).map((c) => ({
           id: c.id, name: c.name, done: c.done, note: c.note,
+          due_date: c.due_date,
           assignee: c.assignee?.name ?? null,
           mine: c.assignee?.id === me,
           depth: 1,
@@ -51,7 +53,7 @@ export async function GET(_: Request, { params }: { params: { token: string } })
         })),
       ]),
       tasks: p.tasks.map((t) => ({
-        id: t.id, name: t.name, done: t.done, due_date: t.due_date,
+        id: t.id, name: t.name, done: t.done, due_date: t.due_date, note: t.note,
         assignee: t.assignee?.name ?? null,
         mine: t.assignee?.id === me,
       })),
@@ -152,7 +154,17 @@ export async function POST(req: Request, { params }: { params: { token: string }
 
     let subject = "General note";
 
-    if (body.milestone_id) {
+    if (body.task_id) {
+      const { data: tk } = await db.from("tasks")
+        .select("id, name, note, project_id").eq("id", body.task_id).single();
+      if (tk && tk.project_id === ctx.projectId) {
+        const stamp = `[${ctx.member.name}] ${note}`;
+        await db.from("tasks")
+          .update({ note: tk.note ? `${tk.note}\n${stamp}` : stamp })
+          .eq("id", tk.id);
+        subject = tk.name;
+      }
+    } else if (body.milestone_id) {
       const { data: ms } = await db.from("milestones")
         .select("id, name, note, project_id").eq("id", body.milestone_id).single();
       if (ms && ms.project_id === ctx.projectId) {

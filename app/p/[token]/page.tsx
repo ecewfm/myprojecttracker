@@ -197,7 +197,14 @@ export default function PublicProject() {
 
         {/* milestones — whole project */}
         <div className="pub-sect">
-          <div className="pub-sect-title" style={{ marginBottom: 10 }}>Milestones</div>
+          <div className="pub-sect-title" style={{ marginBottom: 10 }}>
+            Milestones
+            {p.milestones.some((m) => (m.depth ?? 0) > 0) && (
+              <span style={{ fontWeight: 500, textTransform: "none", letterSpacing: 0, marginLeft: 8, color: "var(--ink-3)" }}>
+                ({p.milestones.filter((m) => (m.depth ?? 0) > 0).length} sub-milestones)
+              </span>
+            )}
+          </div>
           {p.milestones.map((m) => (
             <div
               key={m.id}
@@ -211,7 +218,16 @@ export default function PublicProject() {
                     <span className="pub-kidcount">{m.child_done}/{m.child_total}</span>
                   )}
                 </div>
-                {m.assignee && <div className="pub-row-sub">{m.assignee}{m.mine ? " · you" : ""}</div>}
+                {(m.assignee || m.due_date) && (
+                  <div className="pub-row-sub">
+                    {m.assignee}{m.mine ? " · you" : ""}
+                    {m.due_date && (
+                      <span style={{ color: !m.done && m.due_date < today ? "#b8453a" : undefined }}>
+                        {m.assignee ? " · " : ""}due {m.due_date}
+                      </span>
+                    )}
+                  </div>
+                )}
                 {noteFor === m.id && (
                   <div className="pub-form" style={{ marginTop: 8 }}>
                     <textarea
@@ -253,9 +269,38 @@ export default function PublicProject() {
                   <div className={`pub-row-name ${t.done ? "done" : ""}`}>{t.name}</div>
                   <div className="pub-row-sub">
                     {t.assignee ?? "Unassigned"}{t.mine ? " · you" : ""}
-                    {t.due_date ? ` · due ${t.due_date}` : ""}
+                    {t.due_date && (
+                      <span style={{ color: !t.done && t.due_date < today ? "#b8453a" : undefined }}>
+                        {` · due ${t.due_date}`}
+                      </span>
+                    )}
                   </div>
+                  {noteFor === t.id && (
+                    <div className="pub-form" style={{ marginTop: 8 }}>
+                      <textarea
+                        rows={2} autoFocus
+                        placeholder="Add context for this action item…"
+                        value={noteText}
+                        onChange={(e) => setNoteText(e.target.value)}
+                      />
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          className="pub-btn solid"
+                          onClick={async () => {
+                            await act({ action: "add_note", task_id: t.id, note: noteText }, "Note added.");
+                            setNoteText(""); setNoteFor(null);
+                          }}
+                        >Save note</button>
+                        <button className="pub-link" onClick={() => { setNoteFor(null); setNoteText(""); }}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
+                {noteFor !== t.id && (
+                  <button className="pub-link" onClick={() => { setNoteFor(t.id); setNoteText(""); }}>
+                    Note
+                  </button>
+                )}
               </div>
             ))}
           </div>
