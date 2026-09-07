@@ -188,8 +188,13 @@ export default function ProjectPanel({
   const [meeting, setMeeting] = useState({ start: "", minutes: 30 });
   const [taskDraft, setTaskDraft] = useState({ name: "", assignee_id: "", due_date: "" });
   const [showTaskForm, setShowTaskForm] = useState(false);
+  const [links, setLinks] = useState<any[]>([]);
 
   useEffect(() => setP(project), [project]);
+  useEffect(() => {
+    if (!project) { setLinks([]); return; }
+    api(`/api/projects/${project.id}/links`).then(setLinks).catch(() => {});
+  }, [project]);
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", esc);
@@ -329,6 +334,31 @@ export default function ProjectPanel({
       );
       toast(r.sent ? "Project email sent." : r.reason ?? "Nothing sent.", r.sent ? "ok" : "err");
     } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function issueLink(memberId: string) {
+    try {
+      await api(`/api/projects/${p!.id}/links`, { method: "POST", body: { member_id: memberId } });
+      setLinks(await api(`/api/projects/${p!.id}/links`));
+      toast("Link ready. Copy it and send it over.");
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function revokeLink(memberId: string) {
+    if (!confirm("Revoke this link? It stops working straight away.")) return;
+    try {
+      await api(`/api/projects/${p!.id}/links`, { method: "DELETE", body: { member_id: memberId } });
+      setLinks(await api(`/api/projects/${p!.id}/links`));
+      toast("Revoked.");
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  function copyLink(token: string) {
+    const url = `${window.location.origin}/p/${token}`;
+    navigator.clipboard.writeText(url).then(
+      () => toast("Link copied."),
+      () => toast(url, "err")
+    );
   }
 
   async function saveProjectField(patch: Record<string, unknown>, note?: string) {
@@ -804,6 +834,52 @@ export default function ProjectPanel({
                   await refresh();
                 }}
               />
+            </div>
+          </div>
+
+          {/* share links */}
+          <div className="block">
+            <div className="block-head"><span className="block-title">Share links</span></div>
+            <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 12, lineHeight: 1.6 }}>
+              Each person gets their own link. They see the whole project with their
+              own items highlighted, and can close those, raise a roadblock, or leave
+              a note. They can&rsquo;t delete anything or reach another project.
+            </div>
+
+            {links.filter((l) => !l.revoked).map((l) => (
+              <div key={l.id} className="task" style={{ marginBottom: 6 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13 }}>{l.member?.name}</div>
+                  <div style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                    {l.open_count > 0
+                      ? `Opened ${l.open_count}\u00d7 · last ${new Date(l.last_opened_at).toLocaleDateString("en-PH")}`
+                      : "Not opened yet"}
+                  </div>
+                </div>
+                <button className="block-act" onClick={() => copyLink(l.token)}>Copy</button>
+                <button
+                  className="block-act"
+                  onClick={() => revokeLink(l.member.id)}
+                  style={{ color: "var(--red)" }}
+                >Revoke</button>
+              </div>
+            ))}
+
+            {links.filter((l) => !l.revoked).length === 0 && (
+              <div className="empty">No links yet.</div>
+            )}
+
+            <div className="inline-form" style={{ marginTop: 10 }}>
+              <select
+                defaultValue=""
+                onChange={(e) => { if (e.target.value) { issueLink(e.target.value); e.target.value = ""; } }}
+                style={{ flex: 1, minWidth: 180 }}
+              >
+                <option value="">Create a link for…</option>
+                {members
+                  .filter((m) => !links.some((l) => !l.revoked && l.member?.id === m.id))
+                  .map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
             </div>
           </div>
 

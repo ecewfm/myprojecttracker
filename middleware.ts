@@ -10,6 +10,11 @@ export async function middleware(req: NextRequest) {
   if (pathname.startsWith("/api/auth")) return NextResponse.next();
   if (pathname === "/login") return NextResponse.next();
 
+  // Public share links authenticate with their own token, not the session.
+  // /p/<token> is the page; /api/public/* is what that page calls.
+  if (pathname.startsWith("/p/")) return NextResponse.next();
+  if (pathname.startsWith("/api/public/")) return NextResponse.next();
+
   const ok = await isValidSession(req.cookies.get(SESSION_COOKIE)?.value);
   if (!ok) {
     if (pathname.startsWith("/api")) {
