@@ -49,7 +49,20 @@ export async function DELETE(req: Request) {
   const list: string[] = Array.isArray(ids) ? ids : [ids];
   if (!list.length) return NextResponse.json({ error: "no ids given" }, { status: 400 });
 
-  const { error } = await db.from("team_members").delete().in("id", list);
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-  return NextResponse.json({ deleted: list.length });
+  // Delete in chunks — a single .in() with hundreds of ids overflows the
+  // request, which Supabase rejects as a 400. 100 per round is safe.
+  const CHUNK = 100;
+  let deleted = 0;
+  for (let i = 0; i < list.length; i += CHUNK) {
+    const batch = list.slice(i, i + CHUNK);
+    const { error } = await db.from("team_members").delete().in("id", batch);
+    if (error) {
+      return NextResponse.json(
+        { error: error.message, deleted },
+        { status: 400 }
+      );
+    }
+    deleted += batch.length;
+  }
+  return NextResponse.json({ deleted });
 }
