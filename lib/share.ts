@@ -71,8 +71,11 @@ export async function recordSubmission(opts: {
   }).select("id").single();
 
   // AI reading + owner notification run in the background — the person
-  // submitting shouldn't wait on either.
-  reviewAndNotify(row?.id, opts).catch(() => {});
+  // submitting shouldn't wait on either. Any failure is logged rather than
+  // discarded, so Settings > Recent activity shows what went wrong.
+  reviewAndNotify(row?.id, opts).catch((e) => {
+    log("notify_error", `Submission review failed: ${e?.message ?? e}`, opts.projectId);
+  });
 
   return row?.id;
 }
@@ -134,7 +137,9 @@ ${opts.note ? `They wrote: "${opts.note}"` : "They left no note."}`;
         const json = await res.json();
         summary = json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
       }
-    } catch { /* the notification still goes out without it */ }
+    } catch (e: any) {
+      await log("ai_error", `Gemini failed on a submission: ${e.message}`, opts.projectId);
+    }
   }
 
   if (submissionId && summary) {
@@ -144,13 +149,27 @@ ${opts.note ? `They wrote: "${opts.note}"` : "They left no note."}`;
   // DM the manager. OWNER_CLIQ_EMAIL is who gets told; falls back to the
   // project owner if that isn't set.
   const notify = process.env.OWNER_CLIQ_EMAIL || p.owner?.email;
-  if (notify) {
+
+  if (!notify) {
+    // Nobody to tell. Say so in the log rather than failing silently —
+    // this is the most common reason a submission produces no DM.
+    await log(
+      "notify_skipped",
+      "No DM sent: OWNER_CLIQ_EMAIL isn't set and the project has no owner.",
+      opts.projectId
+    );
+  } else {
     const msg =
       `*${p.title}* — ${opts.memberName} ${KIND_LABEL[opts.kind] ?? "submitted an update"}: "${opts.subject}"` +
       (opts.note ? `\n\n_"${opts.note}"_` : "") +
       (summary ? `\n\n${summary}` : "") +
       `\n\nProject is now at ${p.percent}%.`;
-    try { await cliqDM(notify, msg); } catch { /* badge still shows it */ }
+    try {
+      await cliqDM(notify, msg);
+      await log("cliq_dm", `Submission DM sent to ${notify}`, opts.projectId);
+    } catch (e: any) {
+      await log("cliq_error", `DM to ${notify} failed: ${e.message}`, opts.projectId);
+    }
   }
 
   await log(
