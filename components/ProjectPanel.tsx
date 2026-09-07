@@ -20,17 +20,25 @@ function StatusControl({
 
   useEffect(() => {
     if (!open) return;
+    // Lift the containing card above its siblings while the menu is open,
+    // so later cards in the list don't paint over it.
+    const card = ref.current?.closest(".rb") as HTMLElement | null;
+    if (card) { card.style.position = "relative"; card.style.zIndex = "400"; }
+
     const close = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      if (card) card.style.zIndex = "";
+    };
   }, [open]);
 
   const current = ROADBLOCK_STATUS[value];
 
   return (
-    <div className="stat-ctl" ref={ref}>
+    <div className={`stat-ctl ${open ? "menu-open" : ""}`} ref={ref}>
       <button
         className="stat-btn"
         disabled={disabled}

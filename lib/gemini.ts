@@ -8,13 +8,26 @@ async function generate(prompt: string): Promise<string> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.4, maxOutputTokens: 500 },
+        generationConfig: { temperature: 0.4, maxOutputTokens: 1200 },
       }),
     }
   );
   if (!res.ok) throw new Error(`Gemini failed (${res.status}): ${await res.text()}`);
   const json = await res.json();
-  return json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
+
+  const candidate = json?.candidates?.[0];
+  const text = candidate?.content?.parts?.[0]?.text?.trim() ?? "";
+
+  // MAX_TOKENS means the model was cut off mid-thought. Better to end on a
+  // clean sentence than to show a fragment that stops mid-word.
+  if (candidate?.finishReason === "MAX_TOKENS" && text) {
+    const lastStop = Math.max(
+      text.lastIndexOf("."), text.lastIndexOf("!"), text.lastIndexOf("?")
+    );
+    if (lastStop > 40) return text.slice(0, lastStop + 1);
+  }
+
+  return text;
 }
 
 const VOICE = `You are analysing a workforce-management project for the RTA manager

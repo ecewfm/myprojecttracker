@@ -263,13 +263,25 @@ button:disabled { opacity:.5; cursor:not-allowed; }
 .stat-btn:hover:not(:disabled) { background:rgba(255,255,255,.86); }
 .stat-btn .pip { width:6px; height:6px; border-radius:50%; }
 .stat-btn .car { font-size:8px; color:var(--ink-3); }
+/* The dropdown is the one place the glass has to stop being glass —
+   options behind it were showing through and the middle two became
+   unreadable. Near-solid background, and the whole card lifts above its
+   siblings so nothing paints over the open menu. */
+.stat-ctl:has(.stat-menu) { z-index:400; }
+.rb:has(.stat-menu) { position:relative; z-index:400; }
 .stat-menu {
-  position:absolute; top:calc(100% + 6px); right:0; z-index:20; min-width:162px; padding:5px; border-radius:11px;
-  background:rgba(255,255,255,.86); backdrop-filter:var(--blur-lg); -webkit-backdrop-filter:var(--blur-lg);
-  border:1px solid var(--g-brd); box-shadow:0 10px 34px rgba(16,36,26,.18);
+  position:absolute; top:calc(100% + 6px); right:0; z-index:400;
+  min-width:172px; padding:5px; border-radius:11px;
+  background:#fbfdfc;
+  border:1px solid rgba(29,43,35,.10);
+  box-shadow:0 12px 32px rgba(16,36,26,.20), 0 2px 6px rgba(16,36,26,.10);
 }
-.stat-opt { display:flex; align-items:center; gap:9px; width:100%; padding:8px 10px; border-radius:8px; font-size:12px; color:var(--ink-2); text-align:left; transition:background .12s; }
-.stat-opt:hover { background:rgba(255,255,255,.75); color:var(--ink); }
+.stat-opt {
+  display:flex; align-items:center; gap:9px; width:100%;
+  padding:9px 10px; border-radius:8px; font-size:12.5px;
+  color:var(--ink); text-align:left; transition:background .12s;
+}
+.stat-opt:hover { background:rgba(29,43,35,.06); }
 .stat-opt .pip { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
 .stat-opt .tick-m { margin-left:auto; font-size:10px; color:var(--moss); }
 
@@ -334,8 +346,11 @@ button:disabled { opacity:.5; cursor:not-allowed; }
   border-radius:13px; padding:16px 18px;
   background:linear-gradient(135deg,rgba(29,43,35,.90),rgba(63,122,92,.82));
   backdrop-filter:blur(14px); border:1px solid rgba(255,255,255,.16);
-  box-shadow:0 6px 24px rgba(16,36,26,.20); position:relative; overflow:hidden;
+  box-shadow:0 6px 24px rgba(16,36,26,.20); position:relative;
+  /* clip the decorative glow, not the text — the box grows to fit */
+  overflow:hidden; height:auto; min-height:0;
 }
+.ai p { overflow-wrap:anywhere; }
 .ai::before { content:''; position:absolute; top:-60%; right:-15%; width:280px; height:280px; pointer-events:none; background:radial-gradient(circle,rgba(238,142,50,.26),transparent 68%); }
 .ai p { font-size:13px; color:rgba(255,255,255,.84); margin-bottom:9px; line-height:1.6; position:relative; }
 .ai p:last-child { margin-bottom:0; }
@@ -549,3 +564,6 @@ button:disabled { opacity:.5; cursor:not-allowed; }
   .pub-item { flex-wrap:wrap; }
   .pub-btn { width:100%; }
 }
+
+/* Fallback for browsers without :has() — the class is set from React. */
+.stat-ctl.menu-open { z-index:400; }

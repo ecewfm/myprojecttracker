@@ -129,13 +129,22 @@ ${opts.note ? `They wrote: "${opts.note}"` : "They left no note."}`;
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { temperature: 0.4, maxOutputTokens: 300 },
+            generationConfig: { temperature: 0.4, maxOutputTokens: 900 },
           }),
         }
       );
       if (res.ok) {
         const json = await res.json();
-        summary = json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
+        const cand = json?.candidates?.[0];
+        summary = cand?.content?.parts?.[0]?.text?.trim() ?? "";
+
+        // Trim back to the last complete sentence if the model was cut off.
+        if (cand?.finishReason === "MAX_TOKENS" && summary) {
+          const stop = Math.max(
+            summary.lastIndexOf("."), summary.lastIndexOf("!"), summary.lastIndexOf("?")
+          );
+          if (stop > 40) summary = summary.slice(0, stop + 1);
+        }
       }
     } catch (e: any) {
       await log("ai_error", `Gemini failed on a submission: ${e.message}`, opts.projectId);
