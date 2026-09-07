@@ -1,4 +1,4 @@
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
 async function generate(prompt: string): Promise<string> {
   const res = await fetch(
@@ -23,20 +23,28 @@ no preamble. Be specific about what is actually holding the project up and what
 should happen next. If nothing is blocked, say so and move on rather than
 inventing concern. Do not restate the numbers back at the reader.`;
 
-export async function analyseProject(p: {
-  title: string; status: string; phase: string | null; percent: number;
-  due_date: string | null;
-  milestones: { name: string; done: boolean; note: string }[];
-  roadblocks: { title: string; detail: string; status: string; raised_at: string; owner: string }[];
-  tasks: { name: string; done: boolean; due_date: string | null; assignee: string }[];
-}) {
+export async function analyseProject(
+  p: {
+    title: string; status: string; phase: string | null; percent: number;
+    due_date: string | null;
+    milestones: { name: string; done: boolean; note: string }[];
+    roadblocks: { title: string; detail: string; status: string; raised_at: string; owner: string }[];
+    tasks: { name: string; done: boolean; due_date: string | null; assignee: string }[];
+  },
+  userPrompt?: string
+) {
   const open = p.roadblocks.filter((r) => r.status !== "resolved");
   const notes = p.milestones.filter((m) => m.note).map((m) => `- ${m.name}: ${m.note}`);
   const overdue = p.tasks.filter(
     (t) => !t.done && t.due_date && new Date(t.due_date) < new Date()
   );
 
-  const prompt = `${VOICE}
+  const extra = (userPrompt ?? "").trim();
+  const voice = extra
+    ? `${VOICE}\n\nThe person has also asked you to keep this in mind:\n${extra}`
+    : VOICE;
+
+  const prompt = `${voice}
 
 Project: ${p.title}
 Board column: ${p.status}
@@ -59,12 +67,20 @@ ${notes.length ? notes.join("\n") : "none"}`;
   return generate(prompt);
 }
 
-export async function analysePortfolio(rows: {
-  title: string; percent: number; status: string;
-  openRoadblocks: number; escalated: number; overdueTasks: number;
-  due_date: string | null;
-}[]) {
-  const prompt = `${VOICE}
+export async function analysePortfolio(
+  rows: {
+    title: string; percent: number; status: string;
+    openRoadblocks: number; escalated: number; overdueTasks: number;
+    due_date: string | null;
+  }[],
+  userPrompt?: string
+) {
+  const extra = (userPrompt ?? "").trim();
+  const voice = extra
+    ? `${VOICE}\n\nThe person has also asked you to keep this in mind:\n${extra}`
+    : VOICE;
+
+  const prompt = `${voice}
 
 Write one short paragraph for a weekly email summarising the whole portfolio.
 Lead with whatever most needs the reader's attention this week.

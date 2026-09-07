@@ -51,7 +51,8 @@ export async function buildDigest() {
           escalated: p.roadblocks.filter((r) => r.status === "escalated").length,
           overdueTasks: p.tasks.filter((t) => !t.done && t.due_date && t.due_date < today).length,
           due_date: p.due_date,
-        }))
+        })),
+        settings?.digest_prompt
       );
     } catch { /* the digest still goes out without it */ }
   }

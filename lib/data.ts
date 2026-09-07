@@ -4,21 +4,21 @@ import type { Project, Member, ProjectStatus } from "./types";
 const SELECT = `
   id, ref, title, status, phase, due_date, priority, shared, labels,
   ai_summary, ai_ran_at, reminders_on,
-  owner:team_members!projects_owner_id_fkey ( id, name, email, active ),
-  project_members ( team_members ( id, name, email, active ) ),
+  owner:team_members!projects_owner_id_fkey ( id, name, email, active, job_position, account, site ),
+  project_members ( team_members ( id, name, email, active, job_position, account, site ) ),
   milestones ( id, position, name, note, done ),
   subprojects (
     id, name, position,
-    owner:team_members!subprojects_owner_id_fkey ( id, name, email, active ),
+    owner:team_members!subprojects_owner_id_fkey ( id, name, email, active, job_position, account, site ),
     subproject_milestones ( id, position, name, note, done )
   ),
   tasks (
     id, name, done, due_date,
-    assignee:team_members!tasks_assignee_id_fkey ( id, name, email, active )
+    assignee:team_members!tasks_assignee_id_fkey ( id, name, email, active, job_position, account, site )
   ),
   roadblocks (
     id, title, detail, status, raised_at, target_date,
-    owner:team_members!roadblocks_owner_id_fkey ( id, name, email, active )
+    owner:team_members!roadblocks_owner_id_fkey ( id, name, email, active, job_position, account, site )
   )
 `;
 
@@ -105,7 +105,7 @@ export async function getProject(id: string): Promise<Project | null> {
 export async function getMembers(): Promise<Member[]> {
   const { data } = await db
     .from("team_members")
-    .select("id, name, email, active")
+    .select("id, name, email, active, job_position, account, site")
     .eq("active", true)
     .order("name");
   return data ?? [];

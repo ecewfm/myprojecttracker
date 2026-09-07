@@ -11,6 +11,9 @@ export async function POST(req: Request) {
   const p = await getProject(project_id);
   if (!p) return NextResponse.json({ error: "not found" }, { status: 404 });
 
+  const { data: settings } = await db
+    .from("settings").select("analysis_prompt").eq("id", 1).single();
+
   try {
     const summary = await analyseProject({
       title: p.title,
@@ -27,7 +30,7 @@ export async function POST(req: Request) {
         name: t.name, done: t.done, due_date: t.due_date,
         assignee: t.assignee?.name ?? "unassigned",
       })),
-    });
+    }, settings?.analysis_prompt);
 
     const ran = new Date().toISOString();
     await db.from("projects")

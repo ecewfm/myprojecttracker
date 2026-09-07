@@ -20,7 +20,10 @@ export const ROADBLOCK_STATUS: Record<RoadblockStatus, { label: string; color: s
   resolved:  { label: "Resolved",    color: "#3f7a5c" },
 };
 
-export interface Member  { id: string; name: string; email: string; active: boolean }
+export interface Member {
+  id: string; name: string; email: string; active: boolean;
+  job_position: string | null; account: string | null; site: string | null;
+}
 export interface Milestone {
   id: string; position: number; name: string; note: string; done: boolean;
 }

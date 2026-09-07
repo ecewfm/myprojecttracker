@@ -20,16 +20,32 @@ export async function POST() {
       );
     }
 
+    // Surface a warning if the detail columns came back empty across the
+    // board — that means the API field names differ from the form labels.
+    const withRole = roster.filter((r) => r.job_position).length;
+    const withAccount = roster.filter((r) => r.account).length;
+
     const now = new Date().toISOString();
     const { error } = await db.from("team_members").upsert(
-      roster.map((r) => ({ ...r, active: true, synced_at: now })),
+      roster.map((r) => ({
+        name: r.name,
+        email: r.email,
+        zoho_id: r.zoho_id,
+        job_position: r.job_position,
+        account: r.account,
+        site: r.site,
+        active: true,
+        synced_at: now,
+      })),
       { onConflict: "email" }
     );
     if (error) throw error;
 
     const emails = roster.map((r) => r.email);
     const { data: stale } = await db
-      .from("team_members").select("id, email").not("email", "in", `(${emails.map((e) => `"${e}"`).join(",")})`);
+      .from("team_members")
+      .select("id, email")
+      .not("email", "in", `(${emails.map((e) => `"${e}"`).join(",")})`);
 
     if (stale?.length) {
       await db.from("team_members")
@@ -37,8 +53,22 @@ export async function POST() {
         .in("id", stale.map((s) => s.id));
     }
 
-    await log("sync", `Roster synced from Zoho — ${roster.length} active, ${stale?.length ?? 0} deactivated`);
-    return NextResponse.json({ synced: roster.length, deactivated: stale?.length ?? 0 });
+    await log(
+      "sync",
+      `Roster synced from Zoho — ${roster.length} active, ${stale?.length ?? 0} deactivated`
+    );
+
+    return NextResponse.json({
+      synced: roster.length,
+      deactivated: stale?.length ?? 0,
+      with_job_position: withRole,
+      with_account: withAccount,
+      // A hint the UI can show if mapping looks off.
+      mapping_warning:
+        withRole === 0 || withAccount === 0
+          ? "Some detail columns came back empty. Job position or account field names may differ — see lib/zoho.ts mapRow()."
+          : null,
+    });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 502 });
   }

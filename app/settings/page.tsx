@@ -16,6 +16,8 @@ interface Settings {
   digest_recipients: string[];
   digest_sections: Record<string, boolean>;
   custom_labels: { name: string; color: string }[];
+  analysis_prompt: string;
+  digest_prompt: string;
 }
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -36,6 +38,8 @@ function Inner() {
   const [s, setS] = useState<Settings | null>(null);
   const [activity, setActivity] = useState<any[]>([]);
   const [recipients, setRecipients] = useState("");
+  const [analysisPrompt, setAnalysisPrompt] = useState("");
+  const [digestPrompt, setDigestPrompt] = useState("");
   const [label, setLabel] = useState({ name: "", color: "#4c6a63" });
   const [sending, setSending] = useState(false);
 
@@ -47,6 +51,8 @@ function Inner() {
       ]);
       setS(settings);
       setRecipients((settings.digest_recipients ?? []).join(", "));
+      setAnalysisPrompt(settings.analysis_prompt ?? "");
+      setDigestPrompt(settings.digest_prompt ?? "");
       setActivity(log);
     } catch (e: any) { toast(e.message, "err"); }
   }, [toast]);
@@ -175,6 +181,25 @@ function Inner() {
             </div>
           </div>
 
+          {/* analysis prompt */}
+          <div className="sect">
+            <div className="sect-title">Analysis</div>
+            <div className="sect-desc">
+              How Gemini should read each project. Leave this blank and it works as it does now —
+              anything you write here is added to its instructions, so you steer the emphasis
+              rather than replacing it.
+            </div>
+            <div className="fld">
+              <textarea
+                rows={4}
+                value={analysisPrompt}
+                placeholder="e.g. Be blunt about slipping deadlines. Flag anyone owning more than three open items. Write in Taglish when it reads more naturally."
+                onChange={(e) => setAnalysisPrompt(e.target.value)}
+                onBlur={() => save({ analysis_prompt: analysisPrompt }, "Analysis instructions saved.")}
+              />
+            </div>
+          </div>
+
           {/* digest */}
           <div className="sect">
             <div className="sect-title">Weekly email</div>
@@ -221,6 +246,20 @@ function Inner() {
                 />
               </div>
             ))}
+
+            {sections.ai !== false && (
+              <div className="fld" style={{ marginTop: 14 }}>
+                <label htmlFor="digestPrompt">How the written summary should read</label>
+                <textarea
+                  id="digestPrompt"
+                  rows={3}
+                  value={digestPrompt}
+                  placeholder="e.g. Keep it to three sentences, lead with what needs my attention, skip the projects that are on track."
+                  onChange={(e) => setDigestPrompt(e.target.value)}
+                  onBlur={() => save({ digest_prompt: digestPrompt }, "Summary instructions saved.")}
+                />
+              </div>
+            )}
 
             <button className="btn" style={{ marginTop: 16 }} onClick={sendTest} disabled={sending}>
               {sending ? "Sending…" : "Send one now"}
