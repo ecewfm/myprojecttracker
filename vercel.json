@@ -1,13 +1,6 @@
 {
   "crons": [
-    {
-      "path": "/api/cron/reminders",
-      "schedule": "0 1,8 * * 1-5"
-    },
-    {
-      "path": "/api/cron/digest",
-      "schedule": "0 1 * * *"
-    }
-  ],
-  "_note": "digest cron runs daily; each email (global + per-project) checks its own configured day inside the handler"
+    { "path": "/api/cron/reminders", "schedule": "0 1,8 * * 1-5" },
+    { "path": "/api/cron/digest",    "schedule": "0 1 * * *" }
+  ]
 }
