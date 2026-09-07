@@ -5,7 +5,14 @@ import { TopBar, ToastHost, api, useToast } from "@/components/Shell";
 import ProjectPanel from "@/components/ProjectPanel";
 import { STATUS_COLUMNS, type Project, type Member } from "@/lib/types";
 
-function Card({ p, onOpen }: { p: Project; onOpen: () => void }) {
+function Card({
+  p, onOpen, onDuplicate, onDelete,
+}: {
+  p: Project;
+  onOpen: () => void;
+  onDuplicate: (p: Project) => void;
+  onDelete: (p: Project) => void;
+}) {
   const open = p.roadblocks.filter((r) => r.status !== "resolved");
   const severe = open.some((r) => r.status === "open" || r.status === "escalated");
   const today = new Date().toISOString().slice(0, 10);
@@ -13,6 +20,22 @@ function Card({ p, onOpen }: { p: Project; onOpen: () => void }) {
 
   return (
     <button className={`card ${open.length ? "blocked" : ""}`} onClick={onOpen}>
+      {/* Hidden until hover so the board reads the same at rest. */}
+      <span className="card-acts">
+        <span
+          className="icon-act"
+          role="button" tabIndex={0} title="Duplicate this project"
+          onClick={(e) => { e.stopPropagation(); onDuplicate(p); }}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); onDuplicate(p); } }}
+        >⧉</span>
+        <span
+          className="icon-act del"
+          role="button" tabIndex={0} title="Delete this project"
+          onClick={(e) => { e.stopPropagation(); onDelete(p); }}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); onDelete(p); } }}
+        >🗑</span>
+      </span>
+
       <div className="card-top">
         <span className="card-name">{p.title}</span>
         <span className="card-ref">{p.ref}</span>
@@ -96,6 +119,24 @@ function BoardInner() {
     } catch (e: any) { toast(e.message, "err"); }
   }
 
+  async function duplicate(p: Project) {
+    try {
+      await api(`/api/projects/${p.id}/duplicate`, { method: "POST" });
+      await load();
+      toast(`Copied. "${p.title} (copy)" is in To do.`);
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function remove(p: Project) {
+    if (!confirm(`Delete "${p.title}" permanently? Its milestones, roadblocks, tasks and notes go with it.`)) return;
+    if (!confirm("Last check — this can't be undone. Delete it?")) return;
+    try {
+      await api(`/api/projects/${p.id}`, { method: "DELETE" });
+      await load();
+      toast("Deleted.");
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
   const blockers = projects.reduce(
     (n, p) => n + p.roadblocks.filter((r) => r.status !== "resolved").length, 0
   );
@@ -130,7 +171,15 @@ function BoardInner() {
                 {loading
                   ? <div className="skeleton" />
                   : list.length
-                    ? list.map((p) => <Card key={p.id} p={p} onOpen={() => setSelected(p)} />)
+                    ? list.map((p) => (
+                        <Card
+                          key={p.id}
+                          p={p}
+                          onOpen={() => setSelected(p)}
+                          onDuplicate={duplicate}
+                          onDelete={remove}
+                        />
+                      ))
                     : <div className="col-empty">Nothing here</div>}
               </div>
             </div>

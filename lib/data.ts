@@ -2,7 +2,7 @@ import { db } from "./supabase";
 import type { Project, Member, ProjectStatus } from "./types";
 
 const SELECT = `
-  id, ref, title, status, phase, due_date, priority, shared, labels,
+  id, ref, title, status, phase, due_date, priority, shared, labels, created_at,
   ai_summary, ai_ran_at, reminders_on,
   cliq_channel, email_enabled, email_day, email_hour, email_to, email_cc, email_subject,
   owner:team_members!projects_owner_id_fkey ( id, name, email, active, job_position, account, site ),
@@ -72,6 +72,7 @@ function shape(row: any): Project {
         if (ar !== br) return ar - br;
         return new Date(b.raised_at).getTime() - new Date(a.raised_at).getTime();
       }),
+    created_at: row.created_at,
     percent: pct(milestones),
     ai_summary: row.ai_summary,
     ai_ran_at: row.ai_ran_at,

@@ -47,6 +47,7 @@ export interface Project {
   owner: Member | null; members: Member[];
   milestones: Milestone[];
   tasks: Task[]; roadblocks: Roadblock[];
+  created_at: string;
   percent: number; ai_summary: string | null; ai_ran_at: string | null;
   reminders_on: boolean;
   cliq_channel: string | null;
