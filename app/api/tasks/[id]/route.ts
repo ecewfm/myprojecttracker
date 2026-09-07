@@ -11,7 +11,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     .from("tasks").select("assignee_id").eq("id", params.id).single();
 
   const patch: Record<string, unknown> = {};
-  for (const k of ["name", "due_date", "assignee_id"]) if (k in body) patch[k] = body[k];
+  for (const k of ["name", "due_date", "assignee_id", "note"]) if (k in body) patch[k] = body[k];
   if ("done" in body) {
     patch.done = body.done;
     patch.completed_at = body.done ? new Date().toISOString() : null;
@@ -19,7 +19,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 
   const { data, error } = await db
     .from("tasks").update(patch).eq("id", params.id)
-    .select("id, name, done, due_date").single();
+    .select("id, name, done, due_date, note").single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 

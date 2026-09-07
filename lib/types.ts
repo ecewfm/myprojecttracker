@@ -27,17 +27,16 @@ export interface Member {
 export interface Milestone {
   id: string; position: number; name: string; note: string; done: boolean;
   assignee: Member | null;
+  parent_id: string | null;
+  children: Milestone[];
 }
 export interface Roadblock {
   id: string; title: string; detail: string; status: RoadblockStatus;
   owner: Member | null; raised_at: string; target_date: string | null;
 }
 export interface Task {
-  id: string; name: string; done: boolean; due_date: string | null; assignee: Member | null;
-}
-export interface Subproject {
-  id: string; name: string; owner: Member | null;
-  milestones: Milestone[]; percent: number;
+  id: string; name: string; done: boolean; due_date: string | null;
+  assignee: Member | null; note: string;
 }
 export interface Project {
   id: string; ref: string; title: string; status: ProjectStatus;
@@ -45,7 +44,7 @@ export interface Project {
   priority: boolean; shared: boolean;
   labels: { name: string; color: string }[];
   owner: Member | null; members: Member[];
-  milestones: Milestone[]; subprojects: Subproject[];
+  milestones: Milestone[];
   tasks: Task[]; roadblocks: Roadblock[];
   percent: number; ai_summary: string | null; ai_ran_at: string | null;
   reminders_on: boolean;

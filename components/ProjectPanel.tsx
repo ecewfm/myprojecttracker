@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { api, useToast } from "./Shell";
 import {
   ROADBLOCK_STATUS, STATUS_COLUMNS,
-  type Project, type Member, type Milestone, type RoadblockStatus, type ProjectStatus,
+  type Project, type Member, type Milestone, type Task, type RoadblockStatus, type ProjectStatus,
 } from "@/lib/types";
 
 /* ─────────── status dropdown ─────────── */
@@ -74,16 +74,20 @@ function StatusControl({
 
 /* ─────────── milestone with notes ─────────── */
 function MilestoneRow({
-  m, total, index, members, onToggle, onNote, onRename, onAssign, onDelete,
+  m, total, index, members, depth = 0,
+  onToggle, onNote, onRename, onAssign, onDelete, onMove, onAddChild,
 }: {
   m: Milestone;
   total: number; index: number;
   members: Member[];
-  onToggle: (done: boolean) => void;
-  onNote: (note: string) => void;
-  onRename: (name: string) => void;
-  onAssign: (memberId: string | null) => void;
-  onDelete: () => void;
+  depth?: number;
+  onToggle: (id: string, done: boolean) => void;
+  onNote: (id: string, note: string) => void;
+  onRename: (id: string, name: string) => void;
+  onAssign: (id: string, memberId: string | null) => void;
+  onDelete: (id: string) => void;
+  onMove: (id: string, direction: "up" | "down") => void;
+  onAddChild: (parentId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState(m.note);
@@ -99,78 +103,223 @@ function MilestoneRow({
     setState("saving");
     clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
-      await onNote(v);
+      await onNote(m.id, v);
       setState("saved");
       setTimeout(() => setState("idle"), 1400);
     }, 700);
   }
 
+  const isSub = depth > 0;
+  const doneKids = m.children?.filter((c) => c.done).length ?? 0;
+
+  return (
+    <>
+      <div className={`ms-item ${open ? "open" : ""} ${isSub ? "ms-sub" : ""}`}>
+        <div
+          className="ms-head"
+          role="button"
+          tabIndex={0}
+          onClick={() => setOpen((o) => !o)}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen((o) => !o); } }}
+        >
+          <span
+            className={`ms-box ${m.done ? "on" : ""}`}
+            role="checkbox" aria-checked={m.done} tabIndex={0}
+            onClick={(e) => { e.stopPropagation(); onToggle(m.id, !m.done); }}
+            onKeyDown={(e) => { if (e.key === " ") { e.preventDefault(); e.stopPropagation(); onToggle(m.id, !m.done); } }}
+          >
+            {m.done ? "✓" : ""}
+          </span>
+          <span className={`ms-name ${m.done ? "on" : ""}`}>{m.name}</span>
+          <span className="ms-flags">
+            {m.children?.length > 0 && (
+              <span className="ms-kidcount">{doneKids}/{m.children.length}</span>
+            )}
+            {m.assignee && <span className="ms-person">{m.assignee.name.split(" ")[0]}</span>}
+            {note && <span className="ms-hasnote">Note</span>}
+            {!isSub && <span>{index + 1}/{total}</span>}
+            <span className="ms-car">▸</span>
+          </span>
+        </div>
+
+        {open && (
+          <div className="ms-body">
+            <div className="ms-order">
+              <button onClick={() => onMove(m.id, "up")} title="Move up">↑ Up</button>
+              <button onClick={() => onMove(m.id, "down")} title="Move down">↓ Down</button>
+              {!isSub && (
+                <button onClick={() => onAddChild(m.id)}>+ Sub-milestone</button>
+              )}
+            </div>
+
+            <label htmlFor={`name-${m.id}`}>Name</label>
+            <input
+              id={`name-${m.id}`}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={() => { if (name.trim() && name !== m.name) onRename(m.id, name.trim()); }}
+            />
+
+            <label htmlFor={`assignee-${m.id}`}>Assigned to (optional)</label>
+            <select
+              id={`assignee-${m.id}`}
+              value={m.assignee?.id ?? ""}
+              onChange={(e) => onAssign(m.id, e.target.value || null)}
+            >
+              <option value="">No one</option>
+              {members.map((mem) => <option key={mem.id} value={mem.id}>{mem.name}</option>)}
+            </select>
+
+            <label htmlFor={`note-${m.id}`}>Notes</label>
+            <textarea
+              id={`note-${m.id}`}
+              value={note}
+              placeholder="Decisions, context, what tripped this up…"
+              onChange={(e) => edit(e.target.value)}
+            />
+            <div className="ms-body-foot">
+              <span>
+                {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : note ? "Saved" : "Empty"}
+              </span>
+              <button onClick={() => onDelete(m.id)} style={{ marginLeft: "auto", color: "var(--red)" }}>
+                Delete
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* sub-milestones */}
+      {m.children?.map((c, i) => (
+        <MilestoneRow
+          key={c.id}
+          m={c}
+          index={i}
+          total={m.children.length}
+          members={members}
+          depth={depth + 1}
+          onToggle={onToggle}
+          onNote={onNote}
+          onRename={onRename}
+          onAssign={onAssign}
+          onDelete={onDelete}
+          onMove={onMove}
+          onAddChild={onAddChild}
+        />
+      ))}
+    </>
+  );
+}
+
+/* ─────────── action item, expandable ─────────── */
+function TaskRow({
+  t, members, today, onToggle, onUpdate, onDelete,
+}: {
+  t: Task;
+  members: Member[];
+  today: string;
+  onToggle: (id: string, done: boolean) => void;
+  onUpdate: (id: string, patch: Record<string, unknown>) => void;
+  onDelete: (id: string, name: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(t.name);
+  const [note, setNote] = useState(t.note ?? "");
+  const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => { setName(t.name); setNote(t.note ?? ""); }, [t.name, t.note]);
+
+  function editNote(v: string) {
+    setNote(v);
+    setState("saving");
+    clearTimeout(timer.current);
+    timer.current = setTimeout(async () => {
+      await onUpdate(t.id, { note: v });
+      setState("saved");
+      setTimeout(() => setState("idle"), 1400);
+    }, 700);
+  }
+
+  const overdue = !t.done && t.due_date && t.due_date < today;
+
   return (
     <div className={`ms-item ${open ? "open" : ""}`}>
       <div
         className="ms-head"
-        role="button"
-        tabIndex={0}
+        role="button" tabIndex={0}
         onClick={() => setOpen((o) => !o)}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen((o) => !o); } }}
       >
         <span
-          className={`ms-box ${m.done ? "on" : ""}`}
-          role="checkbox"
-          aria-checked={m.done}
-          tabIndex={0}
-          onClick={(e) => { e.stopPropagation(); onToggle(!m.done); }}
-          onKeyDown={(e) => { if (e.key === " ") { e.preventDefault(); e.stopPropagation(); onToggle(!m.done); } }}
+          className={`ms-box ${t.done ? "on" : ""}`}
+          role="checkbox" aria-checked={t.done} tabIndex={0}
+          onClick={(e) => { e.stopPropagation(); onToggle(t.id, !t.done); }}
+          onKeyDown={(e) => { if (e.key === " ") { e.preventDefault(); e.stopPropagation(); onToggle(t.id, !t.done); } }}
         >
-          {m.done ? "✓" : ""}
+          {t.done ? "✓" : ""}
         </span>
-        <span className={`ms-name ${m.done ? "on" : ""}`}>{m.name}</span>
+        <span className={`ms-name ${t.done ? "on" : ""}`}>{t.name}</span>
         <span className="ms-flags">
-          {m.assignee && <span className="ms-hasnote" style={{ background: "rgba(29,43,35,.09)", color: "var(--ink-2)", borderColor: "var(--g-brd-2)" }}>{m.assignee.name.split(" ")[0]}</span>}
+          {t.assignee && <span className="ms-person">{t.assignee.name.split(" ")[0]}</span>}
           {note && <span className="ms-hasnote">Note</span>}
-          <span>{index + 1}/{total}</span>
+          {t.due_date && (
+            <span style={{ color: overdue ? "var(--red)" : undefined, fontWeight: overdue ? 600 : 400 }}>
+              {t.due_date}
+            </span>
+          )}
           <span className="ms-car">▸</span>
         </span>
       </div>
 
       {open && (
         <div className="ms-body">
-          <label htmlFor={`name-${m.id}`}>Name</label>
+          <label htmlFor={`tname-${t.id}`}>Name</label>
           <input
-            id={`name-${m.id}`}
+            id={`tname-${t.id}`}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onBlur={() => { if (name.trim() && name !== m.name) onRename(name.trim()); }}
-            style={{ width: "100%", padding: "9px 11px", borderRadius: 10, border: "1px solid var(--g-brd-2)", background: "rgba(255,255,255,.55)", fontSize: 13, marginBottom: 12 }}
+            onBlur={() => { if (name.trim() && name !== t.name) onUpdate(t.id, { name: name.trim() }); }}
           />
 
-          <label htmlFor={`assignee-${m.id}`}>Assigned to (optional)</label>
-          <select
-            id={`assignee-${m.id}`}
-            value={m.assignee?.id ?? ""}
-            onChange={(e) => onAssign(e.target.value || null)}
-            style={{ width: "100%", padding: "9px 11px", borderRadius: 10, border: "1px solid var(--g-brd-2)", background: "rgba(255,255,255,.55)", fontSize: 13, marginBottom: 12 }}
-          >
-            <option value="">No one</option>
-            {members.map((mem) => <option key={mem.id} value={mem.id}>{mem.name}</option>)}
-          </select>
+          <div className="fld-2" style={{ marginBottom: 12 }}>
+            <div>
+              <label htmlFor={`tassignee-${t.id}`}>Assigned to</label>
+              <select
+                id={`tassignee-${t.id}`}
+                value={t.assignee?.id ?? ""}
+                onChange={(e) => onUpdate(t.id, { assignee_id: e.target.value || null })}
+                style={{ width: "100%" }}
+              >
+                <option value="">No one</option>
+                {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label htmlFor={`tdue-${t.id}`}>Due</label>
+              <input
+                id={`tdue-${t.id}`}
+                type="date"
+                defaultValue={t.due_date ?? ""}
+                onChange={(e) => onUpdate(t.id, { due_date: e.target.value || null })}
+                style={{ width: "100%" }}
+              />
+            </div>
+          </div>
 
-          <label htmlFor={`note-${m.id}`}>Notes</label>
+          <label htmlFor={`tnote-${t.id}`}>Notes</label>
           <textarea
-            id={`note-${m.id}`}
+            id={`tnote-${t.id}`}
             value={note}
-            placeholder="Decisions, context, what tripped this up…"
-            onChange={(e) => edit(e.target.value)}
+            placeholder="Context, blockers, what's been tried…"
+            onChange={(e) => editNote(e.target.value)}
           />
           <div className="ms-body-foot">
             <span>
               {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : note ? "Saved" : "Empty"}
             </span>
-            <button
-              onClick={onDelete}
-              style={{ marginLeft: "auto", color: "var(--red)" }}
-            >
-              Delete milestone
+            <button onClick={() => onDelete(t.id, t.name)} style={{ marginLeft: "auto", color: "var(--red)" }}>
+              Delete
             </button>
           </div>
         </div>
@@ -289,6 +438,41 @@ export default function ProjectPanel({
       await api(`/api/milestones/${id}`, { method: "DELETE" });
       await refresh();
       toast("Milestone deleted.");
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function moveMilestone(id: string, direction: "up" | "down") {
+    try {
+      await api("/api/milestones/reorder", { method: "POST", body: { id, direction } });
+      await refresh();
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function addSubMilestone(parentId: string) {
+    const name = prompt("Sub-milestone name");
+    if (!name?.trim()) return;
+    try {
+      await api("/api/milestones", {
+        method: "POST",
+        body: { project_id: p!.id, parent_id: parentId, name: name.trim() },
+      });
+      await refresh();
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function updateTask(id: string, patch: Record<string, unknown>) {
+    try {
+      await api(`/api/tasks/${id}`, { method: "PATCH", body: patch });
+      await refresh();
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function deleteTask(id: string, name: string) {
+    if (!confirm(`Delete "${name}"?`)) return;
+    try {
+      await api(`/api/tasks/${id}`, { method: "DELETE" });
+      await refresh();
+      toast("Deleted.");
     } catch (e: any) { toast(e.message, "err"); }
   }
 
@@ -642,38 +826,17 @@ export default function ProjectPanel({
                 index={i}
                 total={p.milestones.length}
                 members={members}
-                onToggle={(done) => toggleMilestone(m.id, done)}
-                onNote={(note) => saveNote(m.id, note)}
-                onRename={(name) => renameMilestone(m.id, name)}
-                onAssign={(memberId) => assignMilestone(m.id, memberId)}
-                onDelete={() => deleteMilestone(m.id)}
+                onToggle={toggleMilestone}
+                onNote={saveNote}
+                onRename={renameMilestone}
+                onAssign={assignMilestone}
+                onDelete={deleteMilestone}
+                onMove={moveMilestone}
+                onAddChild={addSubMilestone}
               />
             ))}
           </div>
 
-          {/* subprojects */}
-          {p.subprojects.length > 0 && (
-            <div className="block">
-              <div className="block-head"><span className="block-title">Subprojects</span></div>
-              {p.subprojects.map((s) => (
-                <div key={s.id} className="sub">
-                  <div className="sub-top">
-                    <span className="sub-name">{s.name}</span>
-                    <span className="sub-who">{s.owner?.name ?? "Unassigned"}</span>
-                  </div>
-                  <div className="sub-bar">
-                    <div className="prog-track"><div className="prog-fill" style={{ width: `${s.percent}%` }} /></div>
-                    <span className="prog-n">{s.percent}%</span>
-                  </div>
-                  <div className="ticks" style={{ marginBottom: 0, marginTop: 9 }}>
-                    {s.milestones.map((m) => (
-                      <span key={m.id} className={`tick ${m.done ? "on" : m.note ? "note" : ""}`} />
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
 
           {/* tasks */}
           <div className="block">
@@ -689,21 +852,15 @@ export default function ProjectPanel({
             )}
 
             {p.tasks.map((t) => (
-              <div key={t.id} className="task">
-                <span
-                  className={`task-box ${t.done ? "on" : ""}`}
-                  role="checkbox" aria-checked={t.done} tabIndex={0}
-                  onClick={() => toggleTask(t.id, !t.done)}
-                  onKeyDown={(e) => { if (e.key === " ") { e.preventDefault(); toggleTask(t.id, !t.done); } }}
-                >
-                  {t.done ? "✓" : ""}
-                </span>
-                <span className={`task-name ${t.done ? "on" : ""}`}>{t.name}</span>
-                <span className="task-who">{t.assignee?.name.split(" ")[0] ?? "—"}</span>
-                <span className={`task-due ${!t.done && t.due_date && t.due_date < today ? "over" : ""}`}>
-                  {t.due_date ?? ""}
-                </span>
-              </div>
+              <TaskRow
+                key={t.id}
+                t={t}
+                members={members}
+                today={today}
+                onToggle={toggleTask}
+                onUpdate={updateTask}
+                onDelete={deleteTask}
+              />
             ))}
 
             {showTaskForm && (

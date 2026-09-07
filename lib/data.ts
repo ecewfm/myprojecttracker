@@ -8,16 +8,11 @@ const SELECT = `
   owner:team_members!projects_owner_id_fkey ( id, name, email, active, job_position, account, site ),
   project_members ( team_members ( id, name, email, active, job_position, account, site ) ),
   milestones (
-    id, position, name, note, done,
+    id, position, name, note, done, parent_id,
     assignee:team_members!milestones_assignee_id_fkey ( id, name, email, active, job_position, account, site )
   ),
-  subprojects (
-    id, name, position,
-    owner:team_members!subprojects_owner_id_fkey ( id, name, email, active, job_position, account, site ),
-    subproject_milestones ( id, position, name, note, done )
-  ),
   tasks (
-    id, name, done, due_date,
+    id, name, done, due_date, note,
     assignee:team_members!tasks_assignee_id_fkey ( id, name, email, active, job_position, account, site )
   ),
   roadblocks (
@@ -32,24 +27,18 @@ function pct(ms: { done: boolean }[]) {
 }
 
 function shape(row: any): Project {
-  const milestones = (row.milestones ?? [])
+  // Milestones come back flat; nest sub-milestones under their parent.
+  const flat = (row.milestones ?? [])
     .sort((a: any, b: any) => a.position - b.position)
-    .map((m: any) => ({ ...m, assignee: m.assignee ?? null }));
+    .map((m: any) => ({ ...m, assignee: m.assignee ?? null, children: [] as any[] }));
 
-  const subprojects = (row.subprojects ?? [])
-    .sort((a: any, b: any) => a.position - b.position)
-    .map((s: any) => {
-      const sm = (s.subproject_milestones ?? []).sort(
-        (a: any, b: any) => a.position - b.position
-      );
-      return {
-        id: s.id,
-        name: s.name,
-        owner: s.owner ?? null,
-        milestones: sm,
-        percent: pct(sm),
-      };
-    });
+  const byId = new Map<string, any>(flat.map((m: any) => [m.id, m]));
+  const milestones: any[] = [];
+  for (const m of flat) {
+    if (m.parent_id && byId.has(m.parent_id)) byId.get(m.parent_id).children.push(m);
+    else milestones.push(m);
+  }
+
 
   return {
     id: row.id,
@@ -66,13 +55,13 @@ function shape(row: any): Project {
       .map((pm: any) => pm.team_members)
       .filter(Boolean),
     milestones,
-    subprojects,
     tasks: (row.tasks ?? []).map((t: any) => ({
       id: t.id,
       name: t.name,
       done: t.done,
       due_date: t.due_date,
       assignee: t.assignee ?? null,
+      note: t.note ?? "",
     })),
     roadblocks: (row.roadblocks ?? [])
       .map((r: any) => ({ ...r, owner: r.owner ?? null }))

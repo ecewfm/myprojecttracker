@@ -567,3 +567,43 @@ button:disabled { opacity:.5; cursor:not-allowed; }
 
 /* Fallback for browsers without :has() — the class is set from React. */
 .stat-ctl.menu-open { z-index:400; }
+
+/* ── sub-milestones and the expanded row controls ── */
+.ms-item.ms-sub {
+  margin-left:26px;
+  border-left:2px solid rgba(76,106,99,.22);
+  border-radius:0 11px 11px 0;
+}
+.ms-item.ms-sub .ms-head { padding-left:14px; }
+.ms-item.ms-sub .ms-name { font-size:12.5px; }
+
+.ms-kidcount {
+  font-size:10px; font-weight:600; color:var(--ink-2);
+  padding:2px 7px; border-radius:6px;
+  background:rgba(29,43,35,.07); border:1px solid var(--g-brd-2);
+}
+.ms-person {
+  font-size:10px; font-weight:600; color:var(--ink-2);
+  padding:2px 7px; border-radius:6px;
+  background:rgba(29,43,35,.07); border:1px solid var(--g-brd-2);
+}
+
+/* move up / down / add sub, shown when a row is expanded */
+.ms-order { display:flex; gap:7px; margin-bottom:12px; flex-wrap:wrap; }
+.ms-order button {
+  font-size:11px; font-weight:500; color:var(--ink-2);
+  padding:5px 10px; border-radius:7px;
+  background:var(--g-3); border:1px solid var(--g-brd-2); transition:all .15s;
+}
+.ms-order button:hover { background:var(--g-hi); color:var(--ink); }
+
+/* inputs inside an expanded milestone or task row */
+.ms-body input, .ms-body select {
+  width:100%; padding:9px 11px; border-radius:10px; margin-bottom:12px;
+  border:1px solid var(--g-brd-2); background:rgba(255,255,255,.55);
+  backdrop-filter:blur(8px); font-size:13px; transition:all .15s;
+}
+.ms-body input:focus, .ms-body select:focus {
+  outline:none; border-color:rgba(63,122,92,.5); background:rgba(255,255,255,.82);
+}
+.ms-body .fld-2 input, .ms-body .fld-2 select { margin-bottom:0; }
