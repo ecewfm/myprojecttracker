@@ -1,5 +1,6 @@
 import { db, log } from "./supabase";
 import { cliqDM, cliqChannel } from "./zoho";
+import { ensureShareUrl } from "./ensure-link";
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 
@@ -50,26 +51,36 @@ function isWeekday() {
   return d >= 1 && d <= 5;
 }
 
-function taskMessage(t: any, daysLeft: number | null) {
+function taskMessage(t: any, daysLeft: number | null, url: string | null) {
   const p = t.projects;
+  let body: string;
+
   if (daysLeft !== null && daysLeft < 0)
-    return `*${p.title}* — "${t.name}" was due ${t.due_date} and is still open. ` +
+    body = `*${p.title}* — "${t.name}" was due ${t.due_date} and is still open. ` +
            `Can you close it out or tell me what it needs?`;
-  if (daysLeft === 0)
-    return `*${p.title}* — "${t.name}" is due today.`;
-  if (daysLeft !== null)
-    return `*${p.title}* — "${t.name}" is due in ${daysLeft} day${daysLeft === 1 ? "" : "s"} (${t.due_date}).`;
-  return `*${p.title}* — "${t.name}" is still open. Any movement?`;
+  else if (daysLeft === 0)
+    body = `*${p.title}* — "${t.name}" is due today.`;
+  else if (daysLeft !== null)
+    body = `*${p.title}* — "${t.name}" is due in ${daysLeft} day${daysLeft === 1 ? "" : "s"} (${t.due_date}).`;
+  else
+    body = `*${p.title}* — "${t.name}" is still open. Any movement?`;
+
+  // Repeat the link every time — people lose the original DM, and a
+  // reminder without a way to act on it just becomes noise.
+  return url ? `${body}\n\nClose it here:\n${url}` : body;
 }
 
-function roadblockMessage(r: any) {
+function roadblockMessage(r: any, url: string | null) {
   const days = Math.floor(hoursSince(r.raised_at) / 24);
   const age = days < 1 ? "today" : `${days} day${days === 1 ? "" : "s"} ago`;
-  if (r.status === "escalated")
-    return `*${r.projects.title}* — escalated roadblock: "${r.title}". ` +
-           `Raised ${age} and still open. This one needs a decision, not a status update.`;
-  return `*${r.projects.title}* — roadblock still open: "${r.title}" (raised ${age}). ` +
-         `Update the status when it moves.`;
+
+  const body = r.status === "escalated"
+    ? `*${r.projects.title}* — escalated roadblock: "${r.title}". ` +
+      `Raised ${age} and still open. This one needs a decision, not a status update.`
+    : `*${r.projects.title}* — roadblock still open: "${r.title}" (raised ${age}). ` +
+      `Update the status when it moves.`;
+
+  return url ? `${body}\n\nProject view:\n${url}` : body;
 }
 
 /** Runs from the cron route. Returns a summary of what it sent. */
@@ -103,7 +114,8 @@ export async function runReminders() {
     if (hoursSince(t.last_nudge_at) < wait) continue;
 
     try {
-      await cliqDM(t.assignee.email, taskMessage(t, daysLeft));
+      const url = await ensureShareUrl(t.projects.id, t.assignee.id);
+      await cliqDM(t.assignee.email, taskMessage(t, daysLeft, url));
       await db.from("tasks")
         .update({ last_nudge_at: new Date().toISOString(), nudge_count: t.nudge_count + 1 })
         .eq("id", t.id);
@@ -146,7 +158,8 @@ export async function runReminders() {
       if (hoursSince(r.last_nudge_at) < wait) continue;
 
       try {
-        await cliqDM(r.owner.email, roadblockMessage(r));
+        const url = await ensureShareUrl(r.projects.id, r.owner.id);
+        await cliqDM(r.owner.email, roadblockMessage(r, url));
         await db.from("roadblocks")
           .update({ last_nudge_at: new Date().toISOString(), nudge_count: r.nudge_count + 1 })
           .eq("id", r.id);
@@ -172,7 +185,7 @@ export async function notifyRoadblock(
   const { data: r } = await db
     .from("roadblocks")
     .select(`
-      id, title, detail, status,
+      id, title, detail, status, owner_id,
       owner:team_members!roadblocks_owner_id_fkey ( name, email ),
       projects ( id, title, owner:team_members!projects_owner_id_fkey ( name, email ) )
     `)
@@ -187,12 +200,18 @@ export async function notifyRoadblock(
     recipients.add(rb.projects.owner.email);
   }
 
+  // Owner gets a link so they can see the project context.
+  const ownerLink = rb.owner_id
+    ? await ensureShareUrl(rb.projects.id, rb.owner_id)
+    : null;
+
   const text =
-    kind === "escalated"
+    (kind === "escalated"
       ? `*${rb.projects.title}* — roadblock escalated: "${rb.title}"\n${rb.detail}\n` +
         `Escalated because it isn't moving at the working level.`
       : `*${rb.projects.title}* — new roadblock assigned to you: "${rb.title}"\n${rb.detail}\n` +
-        `You'll get a nudge here until the status changes.`;
+        `You'll get a nudge here until the status changes.`) +
+    (ownerLink ? `\n\nProject view:\n${ownerLink}` : "");
 
   for (const email of recipients) {
     try {
@@ -212,7 +231,7 @@ export async function notifyAssignment(taskId: string) {
   const { data: t } = await db
     .from("tasks")
     .select(`
-      id, name, due_date,
+      id, name, due_date, assignee_id,
       assignee:team_members!tasks_assignee_id_fkey ( name, email ),
       projects ( id, title )
     `)
@@ -222,15 +241,49 @@ export async function notifyAssignment(taskId: string) {
   const task = t as any;
   if (!task?.assignee?.email) return;
 
+  // Make sure they have a way to close it before telling them about it.
+  const url = await ensureShareUrl(task.projects.id, task.assignee_id);
+
   await cliqDM(
     task.assignee.email,
     `*${task.projects.title}* — you've been assigned: "${task.name}"` +
       (task.due_date ? `\nDue ${task.due_date}.` : "") +
-      `\nI'll follow up here until it's closed.`
+      (url
+        ? `\n\nMark it done here when you're finished:\n${url}`
+        : `\nI'll follow up here until it's closed.`)
   );
   await log(
     "cliq_dm",
     `Assignment sent to ${task.assignee.name} — ${task.name}`,
     task.projects.id
+  );
+}
+
+/** Fired when someone is newly assigned to a milestone. */
+export async function notifyMilestoneAssignment(milestoneId: string) {
+  const { data: m } = await db
+    .from("milestones")
+    .select(`
+      id, name, assignee_id,
+      assignee:team_members!milestones_assignee_id_fkey ( name, email ),
+      projects ( id, title )
+    `)
+    .eq("id", milestoneId)
+    .single();
+
+  const ms = m as any;
+  if (!ms?.assignee?.email) return;
+
+  const url = await ensureShareUrl(ms.projects.id, ms.assignee_id);
+
+  await cliqDM(
+    ms.assignee.email,
+    `*${ms.projects.title}* — milestone assigned to you: "${ms.name}"` +
+      (url ? `\n\nMark it complete here when it's done:\n${url}` : "")
+  );
+  await log(
+    "cliq_dm",
+    `Milestone assigned to ${ms.assignee.name} — ${ms.name}`,
+    ms.projects.id
   );
 }

@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/supabase";
 import { isSignedIn } from "@/lib/auth";
+import { notifyMilestoneAssignment } from "@/lib/reminders";
 
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   if (!(await isSignedIn())) return NextResponse.json({ error: "unauthorised" }, { status: 401 });
   const body = await req.json();
+
+  // Remember who it was assigned to, so we only message on a real change.
+  const { data: before } = await db
+    .from(body.subproject ? "subproject_milestones" : "milestones")
+    .select("assignee_id").eq("id", params.id).maybeSingle();
 
   const patch: Record<string, unknown> = {};
   if ("note" in body) patch.note = body.note;
@@ -21,6 +27,13 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     .select("id, position, name, note, done, assignee:team_members!milestones_assignee_id_fkey(id,name,email,active,job_position,account,site)").single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+
+  // Newly assigned to someone: give them a link and tell them.
+  const newAssignee = body.assignee_id;
+  if (!body.subproject && newAssignee && newAssignee !== before?.assignee_id) {
+    notifyMilestoneAssignment(params.id).catch(() => {});
+  }
+
   return NextResponse.json(data);
 }
 
