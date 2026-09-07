@@ -3,7 +3,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 
-interface Item { id: string; name: string; done: boolean; due_date?: string | null; assignee: string | null; mine: boolean; note?: string }
+interface Item {
+  id: string; name: string; done: boolean; due_date?: string | null;
+  assignee: string | null; mine: boolean; note?: string;
+  depth?: number; child_total?: number; child_done?: number;
+}
 interface Block { id: string; title: string; detail: string; status: string; owner: string | null; raised_at: string }
 interface Data {
   viewer: { id: string; name: string; email: string };
@@ -81,6 +85,8 @@ export default function PublicProject() {
   const myTasks = p.tasks.filter((t) => t.mine && !t.done);
   const myMs = p.milestones.filter((m) => m.mine && !m.done);
   const mineCount = myTasks.length + myMs.length;
+  // Progress counts parent milestones only, matching the board.
+  const topLevel = p.milestones.filter((m) => (m.depth ?? 0) === 0);
   const today = new Date().toISOString().slice(0, 10);
 
   return (
@@ -98,7 +104,7 @@ export default function PublicProject() {
           <div className="pub-prog-top">
             <span className="pub-pct">{p.percent}%</span>
             <span className="pub-sub">
-              {p.milestones.filter((m) => m.done).length} of {p.milestones.length} milestones
+              {topLevel.filter((m) => m.done).length} of {topLevel.length} milestones
               {p.due_date ? ` · due ${p.due_date}` : ""}
             </span>
           </div>
@@ -193,10 +199,18 @@ export default function PublicProject() {
         <div className="pub-sect">
           <div className="pub-sect-title" style={{ marginBottom: 10 }}>Milestones</div>
           {p.milestones.map((m) => (
-            <div key={m.id} className={`pub-row ${m.mine ? "mine" : ""}`}>
+            <div
+              key={m.id}
+              className={`pub-row ${m.mine ? "mine" : ""} ${(m.depth ?? 0) > 0 ? "pub-sub" : ""}`}
+            >
               <span className={`pub-check ${m.done ? "on" : ""}`}>{m.done ? "✓" : ""}</span>
               <div style={{ flex: 1 }}>
-                <div className={`pub-row-name ${m.done ? "done" : ""}`}>{m.name}</div>
+                <div className={`pub-row-name ${m.done ? "done" : ""}`}>
+                  {m.name}
+                  {(m.child_total ?? 0) > 0 && (
+                    <span className="pub-kidcount">{m.child_done}/{m.child_total}</span>
+                  )}
+                </div>
                 {m.assignee && <div className="pub-row-sub">{m.assignee}{m.mine ? " · you" : ""}</div>}
                 {noteFor === m.id && (
                   <div className="pub-form" style={{ marginTop: 8 }}>

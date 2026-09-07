@@ -28,11 +28,28 @@ export async function GET(_: Request, { params }: { params: { token: string } })
       percent: p.percent,
       due_date: p.due_date,
       owner: p.owner?.name ?? null,
-      milestones: p.milestones.map((m) => ({
-        id: m.id, name: m.name, done: m.done, note: m.note,
-        assignee: m.assignee?.name ?? null,
-        mine: m.assignee?.id === me,
-      })),
+      milestones: p.milestones.flatMap((m) => [
+        {
+          id: m.id, name: m.name, done: m.done, note: m.note,
+          assignee: m.assignee?.name ?? null,
+          mine: m.assignee?.id === me,
+          depth: 0,
+          // so the page can show "2/4" on a parent without extra work
+          child_total: m.children?.length ?? 0,
+          child_done: m.children?.filter((c) => c.done).length ?? 0,
+        },
+        // Sub-milestones follow their parent, flattened with a depth flag.
+        // The page indents them; keeping the list flat means the existing
+        // rendering and the "mine" highlighting work unchanged.
+        ...(m.children ?? []).map((c) => ({
+          id: c.id, name: c.name, done: c.done, note: c.note,
+          assignee: c.assignee?.name ?? null,
+          mine: c.assignee?.id === me,
+          depth: 1,
+          child_total: 0,
+          child_done: 0,
+        })),
+      ]),
       tasks: p.tasks.map((t) => ({
         id: t.id, name: t.name, done: t.done, due_date: t.due_date,
         assignee: t.assignee?.name ?? null,
