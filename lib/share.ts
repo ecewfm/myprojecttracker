@@ -1,5 +1,5 @@
 import { db, log } from "./supabase";
-import { cliqDM } from "./zoho";
+import { cliqDM, cliqChannel } from "./zoho";
 import { getProject } from "./data";
 
 /** URL-safe random token. 32 bytes is well past guessable. */
@@ -146,30 +146,52 @@ ${opts.note ? `They wrote: "${opts.note}"` : "They left no note."}`;
     await db.from("submissions").update({ ai_summary: summary }).eq("id", submissionId);
   }
 
-  // DM the manager. OWNER_CLIQ_EMAIL is who gets told; falls back to the
-  // project owner if that isn't set.
-  const notify = process.env.OWNER_CLIQ_EMAIL || p.owner?.email;
+  const msg =
+    `*${p.title}* — ${opts.memberName} ${KIND_LABEL[opts.kind] ?? "submitted an update"}: "${opts.subject}"` +
+    (opts.note ? `\n\n_"${opts.note}"_` : "") +
+    (summary ? `\n\n${summary}` : "") +
+    `\n\nProject is now at ${p.percent}%.`;
 
-  if (!notify) {
-    // Nobody to tell. Say so in the log rather than failing silently —
-    // this is the most common reason a submission produces no DM.
+  // Where updates go, in order of preference:
+  //   1. A Cliq channel — the reliable route. Cliq blocks DMing yourself,
+  //      so if the token owner is also the person being notified, a DM
+  //      silently fails. A channel has no such restriction.
+  //   2. A DM, for when the recipient isn't the token owner.
+  //   3. Nothing — the Updates badge in the board still shows it.
+  const channel = process.env.OWNER_CLIQ_CHANNEL;
+  const dm = process.env.OWNER_CLIQ_EMAIL || p.owner?.email;
+
+  if (channel) {
+    try {
+      await cliqChannel(channel, msg);
+      await log("cliq_update", `Submission posted to #${channel}`, opts.projectId);
+      return;
+    } catch (e: any) {
+      await log("cliq_error", `Post to #${channel} failed: ${e.message}`, opts.projectId);
+      // fall through and try a DM
+    }
+  }
+
+  if (dm) {
+    try {
+      await cliqDM(dm, msg);
+      await log("cliq_dm", `Submission DM sent to ${dm}`, opts.projectId);
+    } catch (e: any) {
+      await log(
+        "cliq_error",
+        `DM to ${dm} failed: ${e.message}` +
+          (e.message?.includes("self_message")
+            ? " — set OWNER_CLIQ_CHANNEL to post to a channel instead."
+            : ""),
+        opts.projectId
+      );
+    }
+  } else if (!channel) {
     await log(
       "notify_skipped",
-      "No DM sent: OWNER_CLIQ_EMAIL isn't set and the project has no owner.",
+      "Nowhere to send this: set OWNER_CLIQ_CHANNEL (recommended) or OWNER_CLIQ_EMAIL.",
       opts.projectId
     );
-  } else {
-    const msg =
-      `*${p.title}* — ${opts.memberName} ${KIND_LABEL[opts.kind] ?? "submitted an update"}: "${opts.subject}"` +
-      (opts.note ? `\n\n_"${opts.note}"_` : "") +
-      (summary ? `\n\n${summary}` : "") +
-      `\n\nProject is now at ${p.percent}%.`;
-    try {
-      await cliqDM(notify, msg);
-      await log("cliq_dm", `Submission DM sent to ${notify}`, opts.projectId);
-    } catch (e: any) {
-      await log("cliq_error", `DM to ${notify} failed: ${e.message}`, opts.projectId);
-    }
   }
 
   await log(
