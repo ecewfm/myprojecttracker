@@ -1,0 +1,80 @@
+const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+
+async function generate(prompt: string): Promise<string> {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.4, maxOutputTokens: 500 },
+      }),
+    }
+  );
+  if (!res.ok) throw new Error(`Gemini failed (${res.status}): ${await res.text()}`);
+  const json = await res.json();
+  return json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
+}
+
+const VOICE = `You are analysing a workforce-management project for the RTA manager
+who owns it. Write 2-3 short paragraphs of plain prose. No headings, no bullets,
+no preamble. Be specific about what is actually holding the project up and what
+should happen next. If nothing is blocked, say so and move on rather than
+inventing concern. Do not restate the numbers back at the reader.`;
+
+export async function analyseProject(p: {
+  title: string; status: string; phase: string | null; percent: number;
+  due_date: string | null;
+  milestones: { name: string; done: boolean; note: string }[];
+  roadblocks: { title: string; detail: string; status: string; raised_at: string; owner: string }[];
+  tasks: { name: string; done: boolean; due_date: string | null; assignee: string }[];
+}) {
+  const open = p.roadblocks.filter((r) => r.status !== "resolved");
+  const notes = p.milestones.filter((m) => m.note).map((m) => `- ${m.name}: ${m.note}`);
+  const overdue = p.tasks.filter(
+    (t) => !t.done && t.due_date && new Date(t.due_date) < new Date()
+  );
+
+  const prompt = `${VOICE}
+
+Project: ${p.title}
+Board column: ${p.status}
+Current phase: ${p.phase ?? "not set"}
+Progress: ${p.percent}% (${p.milestones.filter((m) => m.done).length}/${p.milestones.length} milestones)
+Target date: ${p.due_date ?? "none set"}
+Today: ${new Date().toISOString().slice(0, 10)}
+
+Open roadblocks (${open.length}):
+${open.length ? open.map((r) =>
+  `- [${r.status}] ${r.title} — ${r.detail} (owner ${r.owner}, raised ${r.raised_at.slice(0, 10)})`
+).join("\n") : "none"}
+
+Overdue action items (${overdue.length}):
+${overdue.length ? overdue.map((t) => `- ${t.name} (${t.assignee}, due ${t.due_date})`).join("\n") : "none"}
+
+Notes the team left on milestones:
+${notes.length ? notes.join("\n") : "none"}`;
+
+  return generate(prompt);
+}
+
+export async function analysePortfolio(rows: {
+  title: string; percent: number; status: string;
+  openRoadblocks: number; escalated: number; overdueTasks: number;
+  due_date: string | null;
+}[]) {
+  const prompt = `${VOICE}
+
+Write one short paragraph for a weekly email summarising the whole portfolio.
+Lead with whatever most needs the reader's attention this week.
+
+${rows.map((r) =>
+  `- ${r.title}: ${r.percent}%, ${r.status}, ${r.openRoadblocks} open roadblock(s)` +
+  `${r.escalated ? ` (${r.escalated} escalated)` : ""}` +
+  `${r.overdueTasks ? `, ${r.overdueTasks} overdue item(s)` : ""}` +
+  `${r.due_date ? `, due ${r.due_date}` : ""}`
+).join("\n")}`;
+
+  return generate(prompt);
+}
