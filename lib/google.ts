@@ -13,13 +13,14 @@ function oauth() {
   return client;
 }
 
-export async function sendMail(to: string[], subject: string, html: string) {
+export async function sendMail(to: string[], subject: string, html: string, cc?: string[]) {
   const gmail = google.gmail({ version: "v1", auth: oauth() });
   const from = process.env.GMAIL_SENDER!;
 
   const message = [
     `From: ECE Projects <${from}>`,
     `To: ${to.join(", ")}`,
+    ...(cc && cc.length ? [`Cc: ${cc.join(", ")}`] : []),
     `Subject: =?utf-8?B?${Buffer.from(subject).toString("base64")}?=`,
     "MIME-Version: 1.0",
     'Content-Type: text/html; charset="UTF-8"',

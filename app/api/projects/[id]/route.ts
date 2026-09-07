@@ -16,6 +16,9 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   const allowed = [
     "title", "status", "phase", "owner_id", "due_date",
     "priority", "shared", "labels", "reminders_on", "archived",
+    "cliq_channel",
+    "email_enabled", "email_day", "email_hour",
+    "email_to", "email_cc", "email_subject",
   ];
   const patch = Object.fromEntries(
     Object.entries(body).filter(([k]) => allowed.includes(k))
@@ -28,6 +31,9 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 
 export async function DELETE(_: Request, { params }: { params: { id: string } }) {
   if (!(await isSignedIn())) return NextResponse.json({ error: "unauthorised" }, { status: 401 });
-  await db.from("projects").update({ archived: true }).eq("id", params.id);
-  return NextResponse.json({ ok: true });
+  // Truly delete. Cascades remove milestones, subprojects, tasks, and
+  // roadblocks via ON DELETE CASCADE on their project_id foreign keys.
+  const { error } = await db.from("projects").delete().eq("id", params.id);
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  return NextResponse.json({ deleted: true });
 }

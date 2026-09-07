@@ -4,9 +4,13 @@ import type { Project, Member, ProjectStatus } from "./types";
 const SELECT = `
   id, ref, title, status, phase, due_date, priority, shared, labels,
   ai_summary, ai_ran_at, reminders_on,
+  cliq_channel, email_enabled, email_day, email_hour, email_to, email_cc, email_subject,
   owner:team_members!projects_owner_id_fkey ( id, name, email, active, job_position, account, site ),
   project_members ( team_members ( id, name, email, active, job_position, account, site ) ),
-  milestones ( id, position, name, note, done ),
+  milestones (
+    id, position, name, note, done,
+    assignee:team_members!milestones_assignee_id_fkey ( id, name, email, active, job_position, account, site )
+  ),
   subprojects (
     id, name, position,
     owner:team_members!subprojects_owner_id_fkey ( id, name, email, active, job_position, account, site ),
@@ -28,9 +32,9 @@ function pct(ms: { done: boolean }[]) {
 }
 
 function shape(row: any): Project {
-  const milestones = (row.milestones ?? []).sort(
-    (a: any, b: any) => a.position - b.position
-  );
+  const milestones = (row.milestones ?? [])
+    .sort((a: any, b: any) => a.position - b.position)
+    .map((m: any) => ({ ...m, assignee: m.assignee ?? null }));
 
   const subprojects = (row.subprojects ?? [])
     .sort((a: any, b: any) => a.position - b.position)
@@ -83,6 +87,13 @@ function shape(row: any): Project {
     ai_summary: row.ai_summary,
     ai_ran_at: row.ai_ran_at,
     reminders_on: row.reminders_on,
+    cliq_channel: row.cliq_channel ?? null,
+    email_enabled: row.email_enabled ?? false,
+    email_day: row.email_day ?? 5,
+    email_hour: row.email_hour ?? 9,
+    email_to: row.email_to ?? [],
+    email_cc: row.email_cc ?? [],
+    email_subject: row.email_subject ?? null,
   };
 }
 

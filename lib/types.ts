@@ -26,6 +26,7 @@ export interface Member {
 }
 export interface Milestone {
   id: string; position: number; name: string; note: string; done: boolean;
+  assignee: Member | null;
 }
 export interface Roadblock {
   id: string; title: string; detail: string; status: RoadblockStatus;
@@ -48,4 +49,7 @@ export interface Project {
   tasks: Task[]; roadblocks: Roadblock[];
   percent: number; ai_summary: string | null; ai_ran_at: string | null;
   reminders_on: boolean;
+  cliq_channel: string | null;
+  email_enabled: boolean; email_day: number; email_hour: number;
+  email_to: string[]; email_cc: string[]; email_subject: string | null;
 }

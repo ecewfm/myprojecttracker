@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { api, useToast } from "./Shell";
 import {
   ROADBLOCK_STATUS, STATUS_COLUMNS,
-  type Project, type Member, type RoadblockStatus, type ProjectStatus,
+  type Project, type Member, type Milestone, type RoadblockStatus, type ProjectStatus,
 } from "@/lib/types";
 
 /* ─────────── status dropdown ─────────── */
@@ -66,25 +66,30 @@ function StatusControl({
 
 /* ─────────── milestone with notes ─────────── */
 function MilestoneRow({
-  m, total, index, onToggle, onNote,
+  m, total, index, members, onToggle, onNote, onRename, onAssign, onDelete,
 }: {
-  m: { id: string; name: string; note: string; done: boolean };
+  m: Milestone;
   total: number; index: number;
+  members: Member[];
   onToggle: (done: boolean) => void;
   onNote: (note: string) => void;
+  onRename: (name: string) => void;
+  onAssign: (memberId: string | null) => void;
+  onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState(m.note);
+  const [name, setName] = useState(m.name);
   const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
   const timer = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => setNote(m.note), [m.note]);
+  useEffect(() => setName(m.name), [m.name]);
 
   function edit(v: string) {
     setNote(v);
     setState("saving");
     clearTimeout(timer.current);
-    // Debounced autosave — one write per pause, not per keystroke.
     timer.current = setTimeout(async () => {
       await onNote(v);
       setState("saved");
@@ -113,6 +118,7 @@ function MilestoneRow({
         </span>
         <span className={`ms-name ${m.done ? "on" : ""}`}>{m.name}</span>
         <span className="ms-flags">
+          {m.assignee && <span className="ms-hasnote" style={{ background: "rgba(29,43,35,.09)", color: "var(--ink-2)", borderColor: "var(--g-brd-2)" }}>{m.assignee.name.split(" ")[0]}</span>}
           {note && <span className="ms-hasnote">Note</span>}
           <span>{index + 1}/{total}</span>
           <span className="ms-car">▸</span>
@@ -121,6 +127,26 @@ function MilestoneRow({
 
       {open && (
         <div className="ms-body">
+          <label htmlFor={`name-${m.id}`}>Name</label>
+          <input
+            id={`name-${m.id}`}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => { if (name.trim() && name !== m.name) onRename(name.trim()); }}
+            style={{ width: "100%", padding: "9px 11px", borderRadius: 10, border: "1px solid var(--g-brd-2)", background: "rgba(255,255,255,.55)", fontSize: 13, marginBottom: 12 }}
+          />
+
+          <label htmlFor={`assignee-${m.id}`}>Assigned to (optional)</label>
+          <select
+            id={`assignee-${m.id}`}
+            value={m.assignee?.id ?? ""}
+            onChange={(e) => onAssign(e.target.value || null)}
+            style={{ width: "100%", padding: "9px 11px", borderRadius: 10, border: "1px solid var(--g-brd-2)", background: "rgba(255,255,255,.55)", fontSize: 13, marginBottom: 12 }}
+          >
+            <option value="">No one</option>
+            {members.map((mem) => <option key={mem.id} value={mem.id}>{mem.name}</option>)}
+          </select>
+
           <label htmlFor={`note-${m.id}`}>Notes</label>
           <textarea
             id={`note-${m.id}`}
@@ -132,6 +158,12 @@ function MilestoneRow({
             <span>
               {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : note ? "Saved" : "Empty"}
             </span>
+            <button
+              onClick={onDelete}
+              style={{ marginLeft: "auto", color: "var(--red)" }}
+            >
+              Delete milestone
+            </button>
           </div>
         </div>
       )}
@@ -221,6 +253,89 @@ export default function ProjectPanel({
         milestones: prev.milestones.map((m) => (m.id === id ? { ...m, note } : m)),
       });
       onChange();
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function renameMilestone(id: string, name: string) {
+    try {
+      await api(`/api/milestones/${id}`, { method: "PATCH", body: { name } });
+      await refresh();
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function assignMilestone(id: string, memberId: string | null) {
+    try {
+      await api(`/api/milestones/${id}`, { method: "PATCH", body: { assignee_id: memberId } });
+      await refresh();
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function deleteMilestone(id: string) {
+    if (!confirm("Delete this milestone?")) return;
+    try {
+      await api(`/api/milestones/${id}`, { method: "DELETE" });
+      await refresh();
+      toast("Milestone deleted.");
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function addMilestone() {
+    const name = prompt("Milestone name");
+    if (!name?.trim()) return;
+    try {
+      await api("/api/milestones", { method: "POST", body: { project_id: p!.id, name: name.trim() } });
+      await refresh();
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function deleteProject() {
+    if (!confirm(`Delete "${p!.title}" permanently? This removes its milestones, roadblocks, tasks, and notes. It cannot be undone.`)) return;
+    if (!confirm("Last check — this is irreversible. Delete it?")) return;
+    try {
+      await api(`/api/projects/${p!.id}`, { method: "DELETE" });
+      toast("Project deleted.");
+      onClose();
+      onChange();
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function addMember(memberId: string) {
+    try {
+      await api(`/api/projects/${p!.id}/members`, { method: "POST", body: { member_id: memberId } });
+      await refresh();
+      toast("Added to the project.");
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function removeMember(memberId: string) {
+    try {
+      await api(`/api/projects/${p!.id}/members`, { method: "DELETE", body: { member_id: memberId } });
+      await refresh();
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function postCliqUpdate() {
+    if (!p!.cliq_channel) { toast("Set a Cliq channel first.", "err"); return; }
+    try {
+      await api("/api/cliq-update", { method: "POST", body: { project_id: p!.id } });
+      toast(`Update posted to #${p!.cliq_channel}.`);
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function sendProjectEmailNow() {
+    try {
+      const r = await api<{ sent: boolean; reason?: string }>(
+        `/api/projects/${p!.id}/email`, { method: "POST", body: {} }
+      );
+      toast(r.sent ? "Project email sent." : r.reason ?? "Nothing sent.", r.sent ? "ok" : "err");
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function saveProjectField(patch: Record<string, unknown>, note?: string) {
+    try {
+      await api(`/api/projects/${p!.id}`, { method: "PATCH", body: patch });
+      await refresh();
+      if (note) toast(note);
     } catch (e: any) { toast(e.message, "err"); }
   }
 
@@ -429,6 +544,7 @@ export default function ProjectPanel({
               <span className="block-title">
                 Milestones · {doneCount}/{p.milestones.length}
               </span>
+              <button className="block-act" onClick={addMilestone}>Add</button>
             </div>
             {p.milestones.map((m, i) => (
               <MilestoneRow
@@ -436,8 +552,12 @@ export default function ProjectPanel({
                 m={m}
                 index={i}
                 total={p.milestones.length}
+                members={members}
                 onToggle={(done) => toggleMilestone(m.id, done)}
                 onNote={(note) => saveNote(m.id, note)}
+                onRename={(name) => renameMilestone(m.id, name)}
+                onAssign={(memberId) => assignMilestone(m.id, memberId)}
+                onDelete={() => deleteMilestone(m.id)}
               />
             ))}
           </div>
@@ -537,6 +657,135 @@ export default function ProjectPanel({
             </div>
           </div>
 
+          {/* people on the project */}
+          <div className="block">
+            <div className="block-head"><span className="block-title">People</span></div>
+            {p.owner && (
+              <div className="task" style={{ marginBottom: 6 }}>
+                <span className="task-name">{p.owner.name}</span>
+                <span className="task-who">Owner</span>
+              </div>
+            )}
+            {p.members.map((mem) => (
+              <div key={mem.id} className="task" style={{ marginBottom: 6 }}>
+                <span className="task-name">{mem.name}</span>
+                <button
+                  onClick={() => removeMember(mem.id)}
+                  style={{ fontSize: 11, color: "var(--red)" }}
+                >Remove</button>
+              </div>
+            ))}
+            <div className="inline-form" style={{ marginTop: 8 }}>
+              <select
+                defaultValue=""
+                onChange={(e) => { if (e.target.value) { addMember(e.target.value); e.target.value = ""; } }}
+                style={{ flex: 1, minWidth: 160 }}
+              >
+                <option value="">Add someone…</option>
+                {members
+                  .filter((mem) => mem.id !== p.owner?.id && !p.members.some((x) => x.id === mem.id))
+                  .map((mem) => <option key={mem.id} value={mem.id}>{mem.name}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* cliq channel */}
+          <div className="block">
+            <div className="block-head"><span className="block-title">Cliq channel</span></div>
+            <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 10 }}>
+              Post a status update — progress, roadblocks, and the Gemini summary — to a channel.
+            </div>
+            <div className="inline-form">
+              <input
+                placeholder="channel-name"
+                defaultValue={p.cliq_channel ?? ""}
+                onBlur={(e) => {
+                  const v = e.target.value.trim().replace(/^#/, "");
+                  if (v !== (p.cliq_channel ?? "")) saveProjectField({ cliq_channel: v || null }, "Channel saved.");
+                }}
+                style={{ flex: 1, minWidth: 160 }}
+              />
+              <button className="btn" onClick={postCliqUpdate} disabled={!p.cliq_channel}>
+                Send update
+              </button>
+            </div>
+          </div>
+
+          {/* per-project weekly email */}
+          <div className="block">
+            <div className="block-head"><span className="block-title">Weekly email for this project</span></div>
+            <div className="tog-row">
+              <div>
+                <div className="tog-k">Send a weekly email for this project</div>
+                <div className="tog-sub">Separate from the portfolio digest</div>
+              </div>
+              <div
+                className={`tog ${p.email_enabled ? "on" : ""}`}
+                role="switch" aria-checked={p.email_enabled} tabIndex={0}
+                onClick={() => saveProjectField({ email_enabled: !p.email_enabled })}
+              />
+            </div>
+
+            {p.email_enabled && (
+              <div style={{ marginTop: 12 }}>
+                <div className="fld-2" style={{ marginBottom: 12 }}>
+                  <div>
+                    <label style={{ fontSize: 12, color: "var(--ink-2)", display: "block", marginBottom: 6 }}>Day</label>
+                    <select
+                      defaultValue={p.email_day}
+                      onChange={(e) => saveProjectField({ email_day: Number(e.target.value) })}
+                      style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: "1px solid var(--g-brd-2)", background: "rgba(255,255,255,.5)", fontSize: 13 }}
+                    >
+                      {["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"].map((d,i) =>
+                        <option key={d} value={i+1}>{d}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, color: "var(--ink-2)", display: "block", marginBottom: 6 }}>Time (Manila)</label>
+                    <select
+                      defaultValue={p.email_hour}
+                      onChange={(e) => saveProjectField({ email_hour: Number(e.target.value) })}
+                      style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: "1px solid var(--g-brd-2)", background: "rgba(255,255,255,.5)", fontSize: 13 }}
+                    >
+                      {[7,8,9,10,16,17].map((h) => <option key={h} value={h}>{String(h).padStart(2,"0")}:00</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <label style={{ fontSize: 12, color: "var(--ink-2)", display: "block", marginBottom: 6 }}>To</label>
+                <textarea
+                  rows={2}
+                  defaultValue={(p.email_to ?? []).join(", ")}
+                  placeholder="name@ececontactcenters.com, another@ece.com"
+                  onBlur={(e) => saveProjectField({ email_to: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })}
+                  style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: "1px solid var(--g-brd-2)", background: "rgba(255,255,255,.5)", fontSize: 13, marginBottom: 10, resize: "vertical" }}
+                />
+
+                <label style={{ fontSize: 12, color: "var(--ink-2)", display: "block", marginBottom: 6 }}>CC</label>
+                <textarea
+                  rows={2}
+                  defaultValue={(p.email_cc ?? []).join(", ")}
+                  placeholder="optional"
+                  onBlur={(e) => saveProjectField({ email_cc: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })}
+                  style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: "1px solid var(--g-brd-2)", background: "rgba(255,255,255,.5)", fontSize: 13, marginBottom: 10, resize: "vertical" }}
+                />
+
+                <label style={{ fontSize: 12, color: "var(--ink-2)", display: "block", marginBottom: 6 }}>Subject</label>
+                <input
+                  defaultValue={p.email_subject ?? "{project}_Weekly update {date}"}
+                  onBlur={(e) => saveProjectField({ email_subject: e.target.value })}
+                  style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: "1px solid var(--g-brd-2)", background: "rgba(255,255,255,.5)", fontSize: 13, marginBottom: 6 }}
+                />
+                <div style={{ fontSize: 11, color: "var(--ink-3)", marginBottom: 12 }}>
+                  {"{project}"} becomes the project name, {"{date}"} becomes the send date (MM/DD/YYYY).
+                  Preview: <b>{(p.email_subject ?? "{project}_Weekly update {date}").replace(/{project}/g, p.title).replace(/{date}/g, new Date().toLocaleDateString("en-US"))}</b>
+                </div>
+
+                <button className="btn" onClick={sendProjectEmailNow}>Send one now</button>
+              </div>
+            )}
+          </div>
+
           {/* reminders */}
           <div className="block">
             <div className="block-head"><span className="block-title">Reminders</span></div>
@@ -556,6 +805,21 @@ export default function ProjectPanel({
                 }}
               />
             </div>
+          </div>
+
+          {/* danger zone */}
+          <div className="block">
+            <div className="block-head"><span className="block-title">Delete project</span></div>
+            <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 12 }}>
+              Permanently removes this project and everything in it. This can't be undone.
+            </div>
+            <button
+              className="btn"
+              onClick={deleteProject}
+              style={{ color: "var(--red)", borderColor: "rgba(184,69,58,.4)" }}
+            >
+              Delete this project
+            </button>
           </div>
         </div>
       </div>
