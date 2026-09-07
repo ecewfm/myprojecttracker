@@ -46,21 +46,37 @@ export async function cliqDM(email: string, text: string) {
   return true;
 }
 
-/** Post to a Cliq channel by name, e.g. "wfm-projects". */
+/**
+ * Post to a Cliq channel by its unique name.
+ *
+ * This org routes channel calls through a company id — the endpoint shown
+ * in a channel's Connectors tab is
+ *   https://cliq.zoho.com/company/{ZOHO_COMPANY_ID}/api/v2/channelsbyname/{name}/message
+ * The generic /api/v2/... path (without the company segment) returns 401
+ * here, so ZOHO_COMPANY_ID must be set. It falls back to the generic path
+ * if the id isn't configured.
+ */
 export async function cliqChannel(channel: string, text: string) {
   const token = await accessToken();
-  const res = await fetch(
-    `https://cliq.zoho.com/api/v2/channelsbyname/${encodeURIComponent(channel)}/message`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Zoho-oauthtoken ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ text }),
-    }
-  );
-  if (!res.ok) throw new Error(`Cliq channel post failed (${res.status})`);
+  const company = process.env.ZOHO_COMPANY_ID;
+
+  const url = company
+    ? `https://cliq.zoho.com/company/${company}/api/v2/channelsbyname/${encodeURIComponent(channel)}/message`
+    : `https://cliq.zoho.com/api/v2/channelsbyname/${encodeURIComponent(channel)}/message`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Zoho-oauthtoken ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ text }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Cliq channel post failed (${res.status}): ${body}`);
+  }
   return true;
 }
 
