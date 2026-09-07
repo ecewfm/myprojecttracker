@@ -30,11 +30,20 @@ export async function ensureShareUrl(
     return `${base.replace(/\/$/, "")}/p/${existing.token}`;
   }
 
-  // Revoked links stay revoked. If you pulled someone's access on purpose,
-  // assigning them a task shouldn't quietly hand it back.
-  if (existing?.revoked) return null;
-
   const token = makeToken();
+
+  // A revoked link gets a brand-new token rather than staying dead.
+  // Revoking kills the specific URL that leaked; it isn't a ban on the
+  // person, and assigning them work is a clear signal they need access.
+  if (existing?.revoked) {
+    const { error } = await db.from("share_links")
+      .update({ token, revoked: false, open_count: 0, last_opened_at: null })
+      .eq("project_id", projectId)
+      .eq("member_id", memberId);
+    if (error) return null;
+    return `${base.replace(/\/$/, "")}/p/${token}`;
+  }
+
   const { error } = await db.from("share_links").insert({
     project_id: projectId,
     member_id: memberId,

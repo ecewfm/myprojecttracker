@@ -465,7 +465,16 @@ export default function ProjectPanel({
               <div className="rows" style={{ marginTop: 16 }}>
                 <div className="row">
                   <span className="row-k">Owner</span>
-                  <span className="row-v">{p.owner?.name ?? "Unassigned"}</span>
+                  <select
+                    value={p.owner?.id ?? ""}
+                    onChange={(e) => saveProjectField(
+                      { owner_id: e.target.value || null },
+                      e.target.value ? "Owner set." : "Owner cleared."
+                    )}
+                  >
+                    <option value="">Unassigned</option>
+                    {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
                 </div>
                 <div className="row">
                   <span className="row-k">Column</span>
@@ -474,8 +483,50 @@ export default function ProjectPanel({
                   </select>
                 </div>
                 <div className="row">
+                  <span className="row-k">Name</span>
+                  <input
+                    defaultValue={p.title}
+                    key={p.id + p.title}
+                    onBlur={(e) => {
+                      const v = e.target.value.trim();
+                      if (v && v !== p.title) saveProjectField({ title: v }, "Renamed.");
+                    }}
+                    style={{ border: "1px solid var(--g-brd-2)", background: "rgba(255,255,255,.5)", borderRadius: 7, padding: "4px 8px", fontSize: 12, fontWeight: 500, textAlign: "right", maxWidth: 240 }}
+                  />
+                </div>
+                <div className="row">
                   <span className="row-k">Current phase</span>
-                  <span className="row-v">{p.phase ?? "Not set"}</span>
+                  <input
+                    defaultValue={p.phase ?? ""}
+                    key={p.id + (p.phase ?? "")}
+                    placeholder="Not set"
+                    onBlur={(e) => {
+                      const v = e.target.value.trim();
+                      if (v !== (p.phase ?? "")) saveProjectField({ phase: v || null }, "Phase updated.");
+                    }}
+                    style={{ border: "1px solid var(--g-brd-2)", background: "rgba(255,255,255,.5)", borderRadius: 7, padding: "4px 8px", fontSize: 12, fontWeight: 500, textAlign: "right", maxWidth: 240 }}
+                  />
+                </div>
+                <div className="row">
+                  <span className="row-k">Target date</span>
+                  <input
+                    type="date"
+                    defaultValue={p.due_date ?? ""}
+                    key={p.id + (p.due_date ?? "")}
+                    onChange={(e) => saveProjectField(
+                      { due_date: e.target.value || null },
+                      e.target.value ? "Target date set." : "Target date cleared."
+                    )}
+                    style={{ border: "1px solid var(--g-brd-2)", background: "rgba(255,255,255,.5)", borderRadius: 7, padding: "4px 8px", fontSize: 12, fontWeight: 500 }}
+                  />
+                </div>
+                <div className="row">
+                  <span className="row-k">Priority</span>
+                  <div
+                    className={`tog ${p.priority ? "on" : ""}`}
+                    role="switch" aria-checked={p.priority} tabIndex={0}
+                    onClick={() => saveProjectField({ priority: !p.priority })}
+                  />
                 </div>
                 <div className="row">
                   <span className="row-k">Open roadblocks</span>

@@ -43,6 +43,8 @@ export default function PublicProject() {
   useEffect(() => { load(); }, [load]);
 
   async function act(payload: any, msg: string) {
+    // One in flight at a time — stops a double-tap creating two records.
+    if (busy) return;
     setBusy(payload.id ?? payload.action);
     try {
       const res = await fetch(`/api/public/${token}`, {
