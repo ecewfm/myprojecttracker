@@ -5,6 +5,7 @@ import { cliqChannel } from "@/lib/zoho";
 import { analyseProject } from "@/lib/gemini";
 import { isSignedIn } from "@/lib/auth";
 import { STATUS_COLUMNS } from "@/lib/types";
+import { zoneToday } from "@/lib/tz";
 
 /** Post a project update to its Cliq channel: terse status + Gemini summary. */
 export async function POST(req: Request) {
@@ -17,7 +18,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "No Cliq channel set for this project." }, { status: 400 });
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = zoneToday();
   const open = p.roadblocks.filter((r) => r.status !== "resolved");
   const overdue = p.tasks.filter((t) => !t.done && t.due_date && t.due_date < today);
   const col = STATUS_COLUMNS.find((c) => c.key === p.status)?.label ?? p.status;

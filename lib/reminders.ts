@@ -1,19 +1,11 @@
 import { db, log } from "./supabase";
 import { cliqDM, cliqChannel } from "./zoho";
 import { ensureShareUrl } from "./ensure-link";
+import { daysUntilInZone, isWeekdayInZone, zoneHour } from "./tz";
 
-const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
-
-function manilaNow() {
-  return new Date(Date.now() + MANILA_OFFSET_MS);
-}
-
-function daysUntil(date: string | null): number | null {
-  if (!date) return null;
-  const target = new Date(date + "T00:00:00Z").getTime();
-  const today = new Date(manilaNow().toISOString().slice(0, 10) + "T00:00:00Z").getTime();
-  return Math.round((target - today) / 86_400_000);
-}
+// Day maths runs in the app's timezone (see lib/tz.ts), so "due today"
+// and "weekdays only" mean what they should wherever the server runs.
+const daysUntil = (date: string | null) => daysUntilInZone(date);
 
 function hoursSince(iso: string | null): number {
   if (!iso) return Infinity;
@@ -46,10 +38,6 @@ function intervalHours(
   }
 }
 
-function isWeekday() {
-  const d = manilaNow().getUTCDay();
-  return d >= 1 && d <= 5;
-}
 
 function taskMessage(t: any, daysLeft: number | null, url: string | null) {
   const p = t.projects;
@@ -105,8 +93,18 @@ export async function runReminders() {
   const { data: settings } = await db.from("settings").select("*").eq("id", 1).single();
   if (!settings) return { sent: 0, skipped: "no settings row" };
 
-  if (settings.reminder_base === "weekdays" && !isWeekday()) {
+  if (settings.reminder_base === "weekdays" && !isWeekdayInZone()) {
     return { sent: 0, skipped: "weekend" };
+  }
+
+  // The cron fires every hour so daylight saving never shifts the schedule.
+  // Reminders only go out during working hours in the app timezone, and the
+  // per-item interval check below stops anyone being messaged repeatedly.
+  const hour = zoneHour();
+  const START = Number(process.env.REMINDER_START_HOUR ?? 9);
+  const END = Number(process.env.REMINDER_END_HOUR ?? 17);
+  if (hour < START || hour > END) {
+    return { sent: 0, skipped: `outside working hours (local hour ${hour})` };
   }
 
   let sent = 0;

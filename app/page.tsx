@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { TopBar, ToastHost, api, useToast } from "@/components/Shell";
 import ProjectPanel from "@/components/ProjectPanel";
 import { STATUS_COLUMNS, type Project, type Member } from "@/lib/types";
+import { zoneToday } from "@/lib/tz";
 
 function Card({
   p, onOpen, onDuplicate, onDelete,
@@ -15,7 +16,7 @@ function Card({
 }) {
   const open = p.roadblocks.filter((r) => r.status !== "resolved");
   const severe = open.some((r) => r.status === "open" || r.status === "escalated");
-  const today = new Date().toISOString().slice(0, 10);
+  const today = zoneToday();
   const late = p.due_date && p.due_date < today && p.percent < 100;
 
   return (

@@ -3,6 +3,7 @@ import { sendMail } from "./google";
 import { analysePortfolio } from "./gemini";
 import { getProjects } from "./data";
 import { STATUS_COLUMNS } from "./types";
+import { formatDateInZone, formatInZone, zoneToday, TZ } from "./tz";
 
 const LIVE = ["todo", "pending", "dev", "testing"];
 
@@ -23,7 +24,7 @@ export async function buildDigest() {
   const projects = await getProjects();
   const active = projects.filter((p) => LIVE.includes(p.status));
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = zoneToday();
   const openBlocks = projects.flatMap((p) =>
     p.roadblocks
       .filter((r) => r.status !== "resolved")
@@ -57,7 +58,7 @@ export async function buildDigest() {
     } catch { /* the digest still goes out without it */ }
   }
 
-  const dateLabel = new Date().toLocaleDateString("en-PH", {
+  const dateLabel = formatInZone(new Date(), {
     weekday: "long", day: "numeric", month: "long", year: "numeric",
   });
 
@@ -108,7 +109,7 @@ export async function buildDigest() {
         <div style="font-size:13px;font-weight:600;margin:2px 0 4px;">${esc(r.title)}</div>
         <div style="font-size:12px;color:#3d5249;line-height:1.55;">${esc(r.detail)}</div>
         <div style="font-size:11px;color:#6b8177;margin-top:6px;">
-          ${esc(r.owner?.name ?? "unassigned")} · raised ${new Date(r.raised_at).toLocaleDateString("en-PH")}
+          ${esc(r.owner?.name ?? "unassigned")} · raised ${formatDateInZone(r.raised_at)}
         </div>
       </div>`;
     }).join("")}
@@ -166,10 +167,10 @@ export async function sendDigest(overrideTo?: string[]) {
 // ─────────────────────────────────────────────────────────
 import { getProject } from "./data";
 
-function fmtDate(d: Date) {
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${mm}/${dd}/${d.getFullYear()}`;
+/** MM/DD/YYYY in the app timezone, for the {date} token in email subjects. */
+function fmtDate(_d?: Date) {
+  const [y, m, dd] = zoneToday().split("-");
+  return `${m}/${dd}/${y}`;
 }
 
 export async function buildProjectEmail(projectId: string) {
@@ -178,7 +179,7 @@ export async function buildProjectEmail(projectId: string) {
 
   const settings = (await db.from("settings").select("*").eq("id", 1).single()).data;
   const sections = settings?.digest_sections ?? {};
-  const today = new Date().toISOString().slice(0, 10);
+  const today = zoneToday();
 
   const open = p.roadblocks.filter((r) => r.status !== "resolved");
   const overdue = p.tasks.filter((t) => !t.done && t.due_date && t.due_date < today);
@@ -261,7 +262,7 @@ export async function sendProjectEmail(projectId: string, overrideTo?: string[])
   const { sendMail } = await import("./google");
   await sendMail(recipients, subject, html, cc);
   await db.from("projects")
-    .update({ email_last_sent: new Date().toISOString().slice(0, 10) })
+    .update({ email_last_sent: zoneToday() })
     .eq("id", projectId);
   await log("project_email", `Project email sent for ${projectId} to ${recipients.length} recipient(s)`);
   return { sent: true, to: recipients };

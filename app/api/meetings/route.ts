@@ -4,6 +4,7 @@ import { createMeeting } from "@/lib/google";
 import { getProject } from "@/lib/data";
 import { isSignedIn } from "@/lib/auth";
 import { cliqDM } from "@/lib/zoho";
+import { formatInZone, zoneLabel } from "@/lib/tz";
 
 export async function POST(req: Request) {
   if (!(await isSignedIn())) return NextResponse.json({ error: "unauthorised" }, { status: 401 });
@@ -31,7 +32,7 @@ export async function POST(req: Request) {
     await log("calendar", `Meeting booked for ${p.title} (${people.length} attendees)`, p.id);
 
     if (notify !== false) {
-      const when = new Date(start).toLocaleString("en-PH", { timeZone: "Asia/Manila" });
+      const when = `${formatInZone(start)} ${zoneLabel()}`;
       await Promise.allSettled(
         people.map((x) =>
           cliqDM(x.email, `*${p.title}* — meeting booked for ${when}. Invite is in your calendar.`)

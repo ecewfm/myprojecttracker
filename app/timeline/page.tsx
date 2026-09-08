@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { TopBar, ToastHost, api, useToast } from "@/components/Shell";
 import ProjectPanel from "@/components/ProjectPanel";
 import { STATUS_COLUMNS, type Project, type Member, type Milestone } from "@/lib/types";
+import { zoneToday } from "@/lib/tz";
 
 const LIVE = ["todo", "pending", "dev", "testing"];
 
@@ -23,6 +24,7 @@ const parse = (s: string) => {
   const [y, m, dd] = s.split("-").map(Number);
   return new Date(y, m - 1, dd);
 };
+// Dates render in the app timezone; see lib/tz.ts
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 
 /** Flatten a project's milestones, keeping sub-milestones marked. */
@@ -71,7 +73,7 @@ function Inner() {
   useEffect(() => { load(); }, [load]);
 
   const today = new Date();
-  const todayIso = iso(today);
+  const todayIso = zoneToday();
 
   // The window opens four weeks before this week, so recent history is visible.
   const first = useMemo(() => addDays(startOfWeek(today), -28), [today.getDate()]);

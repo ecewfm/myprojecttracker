@@ -1,3 +1,5 @@
+import { zoneToday, TZ } from "./tz";
+
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
 async function generate(prompt: string): Promise<string> {
@@ -64,7 +66,7 @@ Board column: ${p.status}
 Current phase: ${p.phase ?? "not set"}
 Progress: ${p.percent}% (${p.milestones.filter((m) => m.done).length}/${p.milestones.length} milestones)
 Target date: ${p.due_date ?? "none set"}
-Today: ${new Date().toISOString().slice(0, 10)}
+Today: ${zoneToday()} (${TZ})
 
 Open roadblocks (${open.length}):
 ${open.length ? open.map((r) =>

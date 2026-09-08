@@ -1,4 +1,5 @@
 import { google } from "googleapis";
+import { TZ } from "./tz";
 
 /**
  * One OAuth client covers both Gmail and Calendar — they share a refresh token.
@@ -56,8 +57,8 @@ export async function createMeeting(opts: {
     requestBody: {
       summary: opts.title,
       description: opts.description,
-      start: { dateTime: start.toISOString(), timeZone: "Asia/Manila" },
-      end:   { dateTime: end.toISOString(),   timeZone: "Asia/Manila" },
+      start: { dateTime: start.toISOString(), timeZone: TZ },
+      end:   { dateTime: end.toISOString(),   timeZone: TZ },
       attendees: opts.attendees.map((email) => ({ email })),
       conferenceData: {
         createRequest: {

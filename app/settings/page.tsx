@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { TopBar, ToastHost, api, useToast } from "@/components/Shell";
+import { formatInZone, zoneLabel } from "@/lib/tz";
 
 interface Settings {
   reminder_base: string;
@@ -214,7 +215,7 @@ function Inner() {
                 </select>
               </div>
               <div>
-                <label htmlFor="hour">Time (Manila)</label>
+                <label htmlFor="hour">Time ({zoneLabel()})</label>
                 <select id="hour" value={s.digest_hour}
                   onChange={(e) => save({ digest_hour: Number(e.target.value) })}>
                   {[7, 8, 9, 10, 16, 17].map((h) => (
@@ -314,7 +315,7 @@ function Inner() {
               <div key={a.id} className="log-item">
                 <b>{a.summary}</b>
                 <div className="log-t">
-                  {new Date(a.created_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
+                  {formatInZone(a.created_at)}
                 </div>
               </div>
             ))}

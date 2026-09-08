@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
+import { zoneToday } from "@/lib/tz";
 
 interface Item {
   id: string; name: string; done: boolean; due_date?: string | null;
@@ -87,7 +88,7 @@ export default function PublicProject() {
   const mineCount = myTasks.length + myMs.length;
   // Progress counts parent milestones only, matching the board.
   const topLevel = p.milestones.filter((m) => (m.depth ?? 0) === 0);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = zoneToday();
 
   return (
     <div className="pub-wrap">

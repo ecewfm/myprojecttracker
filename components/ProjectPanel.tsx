@@ -2,12 +2,13 @@
 
 import { useEffect, useState, useRef } from "react";
 import { api, useToast } from "./Shell";
+import { formatDateInZone, zoneLabel, zoneToday } from "@/lib/tz";
 import {
   ROADBLOCK_STATUS, STATUS_COLUMNS,
   type Project, type Member, type Milestone, type Task, type RoadblockStatus, type ProjectStatus,
 } from "@/lib/types";
 
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = () => zoneToday();
 
 /* ─────────── status dropdown ─────────── */
 function StatusControl({
@@ -394,7 +395,7 @@ export default function ProjectPanel({
   const column = STATUS_COLUMNS.find((c) => c.key === p.status);
   const doneCount = p.milestones.filter((m) => m.done).length;
   const openBlocks = p.roadblocks.filter((r) => r.status !== "resolved");
-  const today = new Date().toISOString().slice(0, 10);
+  const today = zoneToday();
 
   /* ── actions ── */
   async function setRoadblockStatus(id: string, status: RoadblockStatus, was: RoadblockStatus) {
@@ -790,7 +791,7 @@ export default function ProjectPanel({
                 <div className="rb-foot">
                   <span>{r.owner?.name ?? "Unassigned"}</span>
                   <span className="sep">·</span>
-                  <span>Raised {new Date(r.raised_at).toLocaleDateString("en-PH")}</span>
+                  <span>Raised {formatDateInZone(r.raised_at)}</span>
                   {r.status !== "resolved" && (
                     <><span className="sep">·</span><span>Cliq nudge active</span></>
                   )}
@@ -828,7 +829,7 @@ export default function ProjectPanel({
             <div className="block-head">
               <span className="block-title">Analysis</span>
               <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
-                {p.ai_ran_at ? `Gemini · ${new Date(p.ai_ran_at).toLocaleDateString("en-PH")}` : "Gemini"}
+                {p.ai_ran_at ? `Gemini · ${formatDateInZone(p.ai_ran_at)}` : "Gemini"}
               </span>
             </div>
             <div className="ai">
@@ -1020,7 +1021,7 @@ export default function ProjectPanel({
                     </select>
                   </div>
                   <div>
-                    <label style={{ fontSize: 12, color: "var(--ink-2)", display: "block", marginBottom: 6 }}>Time (Manila)</label>
+                    <label style={{ fontSize: 12, color: "var(--ink-2)", display: "block", marginBottom: 6 }}>Time ({zoneLabel()})</label>
                     <select
                       defaultValue={p.email_hour}
                       onChange={(e) => saveProjectField({ email_hour: Number(e.target.value) })}
@@ -1101,7 +1102,7 @@ export default function ProjectPanel({
                   <div style={{ fontSize: 13 }}>{l.member?.name}</div>
                   <div style={{ fontSize: 11, color: "var(--ink-3)" }}>
                     {l.open_count > 0
-                      ? `Opened ${l.open_count}\u00d7 · last ${new Date(l.last_opened_at).toLocaleDateString("en-PH")}`
+                      ? `Opened ${l.open_count}\u00d7 · last ${formatDateInZone(l.last_opened_at)}`
                       : "Not opened yet"}
                   </div>
                 </div>

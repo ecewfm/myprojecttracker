@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef, createContext, useContext } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
+import { formatInZone } from "@/lib/tz";
 
 /* ── toast ───────────────────────────────── */
 type ToastFn = (message: string, kind?: "ok" | "err") => void;
@@ -168,7 +169,7 @@ export function Notifications() {
               {n.note && <div className="notif-what" style={{ fontStyle: "italic" }}>&ldquo;{n.note}&rdquo;</div>}
               {n.ai_summary && <div className="notif-ai">{n.ai_summary}</div>}
               <div className="notif-when">
-                {new Date(n.created_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
+                {formatInZone(n.created_at)}
               </div>
             </div>
           ))}
