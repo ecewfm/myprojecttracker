@@ -160,22 +160,78 @@ const str = (v: unknown): string =>
   v === null || v === undefined ? "" : String(v).trim();
 
 /** Excel dates arrive as numbers; normalise everything to YYYY-MM-DD. */
+const MONTHS = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+
+const ymd = (y: number, m: number, d: number) =>
+  `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+
+/**
+ * Read a date cell.
+ *
+ * The tricky part isn't the format we write — it's what Excel does after
+ * someone opens the file and saves it. A text "2026-09-18" becomes a real
+ * date cell, and Excel re-formats it to whatever the machine's locale
+ * prefers: 9/18/2026, 09/18/26, 18-Sep-26, or 18/09/2026 on a non-US
+ * machine. All of those have to land on the same day.
+ *
+ * Ambiguity between d/m and m/d is resolved by looking at the numbers:
+ * anything above 12 can only be a day. Where both could be a month we
+ * assume month-first, matching the US locale these files come back in.
+ */
 export function toDate(v: unknown): string | null {
+  if (v instanceof Date && !isNaN(v.getTime())) {
+    return ymd(v.getFullYear(), v.getMonth() + 1, v.getDate());
+  }
+
   const s = str(v);
   if (!s) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
 
-  // Serial date from Excel
+  // Already ISO.
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) return ymd(+iso[1], +iso[2], +iso[3]);
+
+  // Excel serial, if the cell came through as a raw number.
   const n = Number(s);
   if (Number.isFinite(n) && n > 20000 && n < 80000) {
     const d = XLSX.SSF.parse_date_code(n);
-    if (d) {
-      return `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
-    }
+    if (d) return ymd(d.y, d.m, d.d);
   }
+
+  // 16-Sep-26, 16 September 2026, Sep 16 2026
+  const named = s.match(/^(\d{1,2})[\s-]([a-z]{3,})[\s-](\d{2,4})$/i);
+  if (named) {
+    const mi = MONTHS.indexOf(named[2].slice(0, 3).toLowerCase());
+    if (mi >= 0) return ymd(fullYear(+named[3]), mi + 1, +named[1]);
+  }
+  const named2 = s.match(/^([a-z]{3,})[\s-](\d{1,2}),?[\s-](\d{2,4})$/i);
+  if (named2) {
+    const mi = MONTHS.indexOf(named2[1].slice(0, 3).toLowerCase());
+    if (mi >= 0) return ymd(fullYear(+named2[3]), mi + 1, +named2[2]);
+  }
+
+  // Numeric with separators: 9/18/2026, 09/18/26, 18.09.2026, 18-9-26
+  const parts = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/);
+  if (parts) {
+    const a = +parts[1], b = +parts[2], y = fullYear(+parts[3]);
+    // Whichever number can't be a month is the day.
+    const [month, day] = a > 12 ? [b, a] : [a, b];
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) return ymd(y, month, day);
+    return null;
+  }
+
+  // Last resort. Date.parse is lenient and locale-dependent, so it only
+  // runs once everything predictable has been ruled out.
   const parsed = new Date(s);
-  if (!isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  if (!isNaN(parsed.getTime())) {
+    return ymd(parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate());
+  }
   return null;
+}
+
+/** Two-digit years: 26 → 2026, 98 → 1998. */
+function fullYear(y: number): number {
+  if (y >= 1000) return y;
+  return y < 70 ? 2000 + y : 1900 + y;
 }
 
 export const toBool = (v: unknown) => /^(yes|y|true|1|done)$/i.test(str(v));
@@ -199,7 +255,9 @@ function sheetRows(wb: XLSX.WorkBook, name: string): ParsedRow[] {
 }
 
 export function parseWorkbook(buf: ArrayBuffer): Parsed {
-  const wb = XLSX.read(buf, { type: "array" });
+  // cellDates gives real Date objects for date cells, which sidesteps the
+  // whole question of what format Excel decided to display them in.
+  const wb = XLSX.read(buf, { type: "array", cellDates: true });
 
   // Project sheet is Field/Value pairs rather than a table.
   const project: Record<string, string> = {};
