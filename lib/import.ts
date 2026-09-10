@@ -373,10 +373,26 @@ export async function applyImport(
   const idMap = new Map<string, string>();
   const nameToId = new Map<string, string>();
 
+  /**
+   * What's already on the project, keyed by name and parent.
+   *
+   * A row with a blank ID used to insert unconditionally, so importing the
+   * same file twice — or retrying after a failure — created a second copy of
+   * every row. Matching on name makes a re-import update instead, which is
+   * what "merge" should mean.
+   */
+  const existingKey = new Map<string, string>();   // "parent|name" → milestone id
+
+  const keyOf = (name: string, parentId: string | null) =>
+    `${parentId ?? "root"}|${name.trim().toLowerCase()}`;
+
   {
     const { data: current } = await db.from("milestones")
-      .select("id, name").eq("project_id", projectId).is("parent_id", null);
-    for (const m of current ?? []) nameToId.set(String(m.name).trim().toLowerCase(), m.id);
+      .select("id, name, parent_id").eq("project_id", projectId);
+    for (const m of current ?? []) {
+      existingKey.set(keyOf(String(m.name), m.parent_id), m.id);
+      if (!m.parent_id) nameToId.set(String(m.name).trim().toLowerCase(), m.id);
+    }
   }
 
   const msRows = parsed.milestones.filter((r) => r["Milestone"] || r["ID"]);
@@ -430,8 +446,16 @@ export async function applyImport(
         project_id: projectId,
       };
 
-      if (r["ID"]) toUpdate.push({ id: r["ID"], ...fields });
-      else { position++; toInsert.push({ ...fields, position }); }
+      // An explicit ID wins. Otherwise, if something with this name already
+      // sits under the same parent, update that rather than making a twin.
+      const existingId = r["ID"] || existingKey.get(keyOf(name, parentId));
+
+      if (existingId) {
+        toUpdate.push({ id: existingId, ...fields });
+      } else {
+        position++;
+        toInsert.push({ ...fields, position });
+      }
     }
 
     if (toUpdate.length) {
@@ -440,6 +464,7 @@ export async function applyImport(
       else result.updated += toUpdate.length;
       for (const u of toUpdate) {
         idMap.set(u.id, u.id);
+        existingKey.set(keyOf(String(u.name), u.parent_id), u.id);
         if (!u.parent_id) nameToId.set(String(u.name).trim().toLowerCase(), u.id);
       }
     }
@@ -451,6 +476,7 @@ export async function applyImport(
       else {
         result.created += data?.length ?? 0;
         for (const row of data ?? []) {
+          existingKey.set(keyOf(String(row.name), row.parent_id), row.id);
           if (!row.parent_id) nameToId.set(String(row.name).trim().toLowerCase(), row.id);
         }
       }
@@ -521,6 +547,16 @@ export async function applyImport(
     }
 
     const liveT = tRows.filter((r) => !isDelete(r) && r["Action item"]);
+
+    // Same de-duplication as milestones: a blank ID matches an existing
+    // action item by name rather than creating a second one.
+    const existingT = new Map<string, string>();
+    {
+      const { data: current } = await db.from("tasks")
+        .select("id, name").eq("project_id", projectId);
+      for (const t of current ?? []) existingT.set(String(t.name).trim().toLowerCase(), t.id);
+    }
+
     const toUpdate: any[] = [];
     const toInsert: any[] = [];
 
@@ -532,7 +568,8 @@ export async function applyImport(
         note: r["Notes"] ?? "",
         project_id: projectId,
       };
-      if (r["ID"]) toUpdate.push({ id: r["ID"], ...fields });
+      const existingId = r["ID"] || existingT.get(String(r["Action item"]).trim().toLowerCase());
+      if (existingId) toUpdate.push({ id: existingId, ...fields });
       else toInsert.push(fields);
     }
 
@@ -605,6 +642,14 @@ export async function applyImport(
     }
 
     const liveR = rRows.filter((r) => !isDelete(r) && r["Roadblock"]);
+
+    const existingR = new Map<string, string>();
+    {
+      const { data: current } = await db.from("roadblocks")
+        .select("id, title").eq("project_id", projectId);
+      for (const rb of current ?? []) existingR.set(String(rb.title).trim().toLowerCase(), rb.id);
+    }
+
     const valid = ["open", "progress", "escalated", "resolved"];
     const toUpdate: any[] = [];
     const toInsert: any[] = [];
@@ -620,7 +665,8 @@ export async function applyImport(
         target_date: toDate(r["Target date"]),
         project_id: projectId,
       };
-      if (r["ID"]) toUpdate.push({ id: r["ID"], ...fields });
+      const existingId = r["ID"] || existingR.get(String(r["Roadblock"]).trim().toLowerCase());
+      if (existingId) toUpdate.push({ id: existingId, ...fields });
       else toInsert.push(fields);
     }
 
