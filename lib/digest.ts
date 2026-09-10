@@ -3,6 +3,7 @@ import { sendMail } from "./google";
 import { analysePortfolio } from "./gemini";
 import { getProjects } from "./data";
 import { STATUS_COLUMNS } from "./types";
+import { renderMarkdown } from "./markdown";
 import { formatDateInZone, formatInZone, zoneToday, TZ } from "./tz";
 
 const LIVE = ["todo", "pending", "dev", "testing"];
@@ -62,85 +63,182 @@ export async function buildDigest() {
     weekday: "long", day: "numeric", month: "long", year: "numeric",
   });
 
-  const html = `
-<div style="font-family:-apple-system,'Segoe UI',Roboto,sans-serif;max-width:640px;margin:0 auto;color:#16241d;background:#f7f8f7;padding:28px;">
-  <div style="background:#ffffff;border:1px solid #e6ebe8;border-radius:14px;padding:28px;">
+  // ── the email ──
+  // Table-based with inline styles: Outlook ignores <ul>, flexbox and most
+  // of a <style> block, so everything is laid out with tables.
 
-    <div style="font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#6b8177;font-weight:700;">ECE</div>
-    <h1 style="font-size:20px;margin:6px 0 2px;font-weight:600;">Weekly project update</h1>
-    <div style="font-size:13px;color:#6b8177;margin-bottom:24px;">${dateLabel}</div>
+  const bar = (percent: number, blocked: boolean) => `
+    <table role="presentation" cellpadding="0" cellspacing="0" align="right">
+      <tr>
+        <td>
+          <table role="presentation" width="110" cellpadding="0" cellspacing="0" style="background:#e6ebe8;border-radius:4px;">
+            <tr><td style="background:${blocked ? "#b8453a" : "#3f7a5c"};border-radius:4px;height:7px;width:${Math.max(percent, 2)}%;font-size:0;line-height:0;">&nbsp;</td></tr>
+          </table>
+        </td>
+        <td style="padding-left:9px;font-size:12px;font-weight:600;color:#3d5249;width:34px;">${percent}%</td>
+      </tr>
+    </table>`;
 
-    <div style="display:flex;gap:24px;padding:16px 0;border-top:1px solid #eef1ef;border-bottom:1px solid #eef1ef;margin-bottom:24px;">
-      <div><div style="font-size:22px;font-weight:600;">${active.length}</div><div style="font-size:11px;color:#6b8177;">Active</div></div>
-      <div><div style="font-size:22px;font-weight:600;color:${openBlocks.length ? "#b8453a" : "#16241d"};">${openBlocks.length}</div><div style="font-size:11px;color:#6b8177;">Roadblocks</div></div>
-      <div><div style="font-size:22px;font-weight:600;color:${overdue.length ? "#d97b1f" : "#16241d"};">${overdue.length}</div><div style="font-size:11px;color:#6b8177;">Overdue</div></div>
-    </div>
+  const chip = (text: string, fg: string, bg: string, bd: string) =>
+    `<span style="display:inline-block;font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:${fg};background:${bg};border:1px solid ${bd};border-radius:4px;padding:2px 6px;margin-left:7px;">${text}</span>`;
 
-    ${ai ? `
-    <div style="background:#1d2b23;color:rgba(255,255,255,.86);border-radius:12px;padding:18px 20px;margin-bottom:26px;font-size:13px;line-height:1.65;">
-      ${esc(ai).split("\n").filter(Boolean).map((l) => `<p style="margin:0 0 10px;">${l}</p>`).join("")}
-      <div style="font-size:10px;color:rgba(255,255,255,.45);margin-top:6px;">Written by Gemini from this week's data</div>
-    </div>` : ""}
+  const section = (label: string) => `
+  <tr><td style="padding:26px 30px 4px;">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.12em;color:#6b8177;text-transform:uppercase;margin-bottom:12px;">${label}</div>
+  </td></tr>`;
 
-    ${sections.progress !== false && active.length ? `
-    <h2 style="font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:#6b8177;margin:0 0 12px;">Progress</h2>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:26px;">
-      ${active.map((p) => `
-        <tr style="border-bottom:1px solid #eef1ef;">
-          <td style="padding:10px 0;font-size:13px;font-weight:500;">${esc(p.title)}
-                      </td>
-          <td style="padding:10px 0;text-align:right;width:150px;">
-            <div style="display:inline-flex;align-items:center;gap:9px;">
-              ${bar(p.percent)}
-              <span style="font-size:12px;color:#3d5249;min-width:30px;">${p.percent}%</span>
-            </div>
-          </td>
-        </tr>`).join("")}
-    </table>` : ""}
+  // Most complete first, so whatever is lagging sits together at the bottom.
+  const listed = [...active].sort((a, b) => b.percent - a.percent);
+  const shown = listed.slice(0, 12);
+  const hidden = listed.length - shown.length;
 
-    ${sections.roadblocks !== false && openBlocks.length ? `
-    <h2 style="font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:#6b8177;margin:0 0 12px;">Roadblocks</h2>
-    ${openBlocks.map((r) => {
-      const c = r.status === "escalated" ? "#5f4f87" : r.status === "progress" ? "#d97b1f" : "#b8453a";
-      return `
-      <div style="border-left:3px solid ${c};background:#fafbfa;border-radius:0 8px 8px 0;padding:12px 14px;margin-bottom:8px;">
-        <div style="font-size:11px;color:#6b8177;">${esc(r.project)}</div>
-        <div style="font-size:13px;font-weight:600;margin:2px 0 4px;">${esc(r.title)}</div>
-        <div style="font-size:12px;color:#3d5249;line-height:1.55;">${esc(r.detail)}</div>
-        <div style="font-size:11px;color:#6b8177;margin-top:6px;">
-          ${esc(r.owner?.name ?? "unassigned")} · raised ${formatDateInZone(r.raised_at)}
+  const projectRows = shown.map((p, i) => {
+    const blocked = p.roadblocks.some((r) => r.status !== "resolved");
+    const late = !!p.due_date && p.due_date < today && p.percent < 100;
+    const meta = [
+      p.owner?.name,
+      p.due_date ? `due ${formatDateInZone(p.due_date)}` : null,
+    ].filter(Boolean).join(" &middot; ");
+
+    return `
+      <tr><td style="padding:11px 0;${i === shown.length - 1 ? "" : "border-bottom:1px solid #eef1ef;"}">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td valign="middle" style="font-size:13.5px;font-weight:600;color:#16241d;">
+              ${esc(p.title)}
+              ${p.priority ? chip("Priority", "#96540c", "#fdf0e0", "#f2d3ab") : ""}
+              ${blocked ? chip("Blocked", "#8c2f26", "#fbeae8", "#edc4bf") : ""}
+              ${late && !blocked ? chip("Late", "#8c2f26", "#fbeae8", "#edc4bf") : ""}
+              ${meta ? `<div style="font-size:11px;color:#6b8177;font-weight:400;margin-top:3px;">${esc(meta)}</div>` : ""}
+            </td>
+            <td width="150" align="right" valign="middle">${bar(p.percent, blocked)}</td>
+          </tr>
+        </table>
+      </td></tr>`;
+  }).join("");
+
+  const roadblockCards = openBlocks.map((r) => {
+    const days = Math.max(0, Math.floor((Date.now() - new Date(r.raised_at).getTime()) / 86400000));
+    const colour = r.status === "escalated" ? "#5f4f87" : r.status === "progress" ? "#8a5310" : "#8c2f26";
+    const label = r.status === "progress" ? "In progress" : r.status === "escalated" ? "Escalated" : "Open";
+
+    return `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fbf7f6;border:1px solid #f0dedb;border-left:3px solid ${colour};border-radius:0 10px 10px 0;margin-bottom:8px;">
+      <tr><td style="padding:14px 16px;">
+        <div style="font-size:11px;color:#6b8177;margin-bottom:3px;">${esc(r.project)}</div>
+        <div style="font-size:13.5px;font-weight:600;color:#16241d;margin-bottom:5px;">${esc(r.title)}</div>
+        ${r.detail ? `<div style="font-size:12.5px;color:#3d5249;line-height:1.6;margin-bottom:8px;">${esc(r.detail)}</div>` : ""}
+        <div style="font-size:11px;color:#6b8177;">
+          ${esc(r.owner?.name ?? "Unassigned")} &middot; open ${days} day${days === 1 ? "" : "s"} &middot;
+          <span style="color:${colour};font-weight:600;">${label}</span>
         </div>
-      </div>`;
-    }).join("")}
-    <div style="height:18px;"></div>` : ""}
+      </td></tr>
+    </table>`;
+  }).join("");
 
-    ${sections.overdue !== false && overdue.length ? `
-    <h2 style="font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:#6b8177;margin:0 0 12px;">Overdue</h2>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:26px;">
-      ${overdue.map((t) => `
-        <tr style="border-bottom:1px solid #eef1ef;">
-          <td style="padding:9px 0;font-size:13px;">${esc(t.name)}
-            <div style="font-size:11px;color:#6b8177;">${esc(t.project)} · ${esc(t.assignees?.map((a) => a.name).join(", ") || "unassigned")}</div>
-          </td>
-          <td style="padding:9px 0;text-align:right;font-size:12px;color:#b8453a;">${t.due_date}</td>
-        </tr>`).join("")}
-    </table>` : ""}
+  const soon = [
+    ...overdue.map((t: any) => ({
+      name: t.name,
+      sub: `${t.project} &middot; ${t.assignees?.map((a: any) => a.name).join(", ") || "unassigned"}`,
+      date: t.due_date as string,
+      late: true,
+    })),
+    ...upcoming.map((p) => ({
+      name: p.title,
+      sub: "Project target date",
+      date: p.due_date as string,
+      late: false,
+    })),
+  ].sort((a, b) => a.date.localeCompare(b.date)).slice(0, 10);
 
-    ${upcoming.length ? `
-    <h2 style="font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:#6b8177;margin:0 0 12px;">Due in the next week</h2>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
-      ${upcoming.map((p) => `
-        <tr style="border-bottom:1px solid #eef1ef;">
-          <td style="padding:9px 0;font-size:13px;">${esc(p.title)}</td>
-          <td style="padding:9px 0;text-align:right;font-size:12px;color:#3d5249;">${p.due_date} · ${p.percent}%</td>
-        </tr>`).join("")}
-    </table>` : ""}
+  const soonRows = soon.map((s, i) => {
+    const edge = i === soon.length - 1 ? "" : "border-bottom:1px solid #eef1ef;";
+    return `
+    <tr>
+      <td style="padding:9px 0;${edge}font-size:13px;color:#16241d;">
+        ${esc(s.name)}
+        <div style="font-size:11px;color:#6b8177;margin-top:2px;">${s.sub}</div>
+      </td>
+      <td align="right" style="padding:9px 0;${edge}font-size:12px;color:${s.late ? "#b8453a" : "#3d5249"};${s.late ? "font-weight:600;" : ""}white-space:nowrap;">
+        ${formatDateInZone(s.date)}
+      </td>
+    </tr>`;
+  }).join("");
 
-    <div style="margin-top:28px;padding-top:18px;border-top:1px solid #eef1ef;">
-      <a href="${process.env.APP_URL}" style="display:inline-block;background:#1d2b23;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:500;">Open the board</a>
+  const html = `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#e8eeea;font-family:-apple-system,'Segoe UI',Roboto,sans-serif;">
+<tr><td align="center" style="padding:26px 12px;">
+<table role="presentation" width="660" cellpadding="0" cellspacing="0" style="max-width:660px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;">
+
+  <tr><td style="background:#1d2b23;padding:26px 30px 22px;">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.22em;color:#8fc9a8;text-transform:uppercase;">ECE</div>
+    <div style="font-size:22px;font-weight:600;color:#ffffff;letter-spacing:-.02em;margin-top:8px;">Weekly project update</div>
+    <div style="font-size:13px;color:#9ec4ad;margin-top:3px;">${dateLabel}</div>
+  </td></tr>
+
+  <tr><td>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td width="33.3%" style="padding:20px 10px;text-align:center;border-right:1px solid #eef1ef;border-bottom:1px solid #eef1ef;">
+          <div style="font-size:26px;font-weight:600;color:#16241d;line-height:1;">${active.length}</div>
+          <div style="font-size:11px;color:#6b8177;margin-top:5px;">Active projects</div>
+        </td>
+        <td width="33.3%" style="padding:20px 10px;text-align:center;border-right:1px solid #eef1ef;border-bottom:1px solid #eef1ef;">
+          <div style="font-size:26px;font-weight:600;color:${openBlocks.length ? "#b8453a" : "#16241d"};line-height:1;">${openBlocks.length}</div>
+          <div style="font-size:11px;color:#6b8177;margin-top:5px;">Roadblock${openBlocks.length === 1 ? "" : "s"}</div>
+        </td>
+        <td width="33.3%" style="padding:20px 10px;text-align:center;border-bottom:1px solid #eef1ef;">
+          <div style="font-size:26px;font-weight:600;color:${overdue.length ? "#d97b1f" : "#16241d"};line-height:1;">${overdue.length}</div>
+          <div style="font-size:11px;color:#6b8177;margin-top:5px;">Overdue</div>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+
+  ${ai ? `
+  ${section("This week, in short")}
+  <tr><td style="padding:0 30px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f8f5;border-left:3px solid #3f7a5c;border-radius:0 10px 10px 0;">
+      <tr><td style="padding:18px 20px;">${renderMarkdown(ai)}</td></tr>
+    </table>
+  </td></tr>` : ""}
+
+  ${sections.progress !== false && shown.length ? `
+  ${section("Where each project stands")}
+  <tr><td style="padding:0 30px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${projectRows}</table>
+    ${hidden > 0 ? `<div style="font-size:11.5px;color:#6b8177;padding-top:12px;">and ${hidden} more on the board</div>` : ""}
+  </td></tr>` : ""}
+
+  ${sections.roadblocks !== false && openBlocks.length ? `
+  ${section("Needs your attention")}
+  <tr><td style="padding:0 30px;">${roadblockCards}</td></tr>` : ""}
+
+  ${soon.length ? `
+  ${section("Due in the next seven days")}
+  <tr><td style="padding:0 30px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${soonRows}</table>
+  </td></tr>` : ""}
+
+  <tr><td style="padding:28px 30px 30px;">
+    <table role="presentation" cellpadding="0" cellspacing="0">
+      <tr><td style="background:#1d2b23;border-radius:9px;">
+        <a href="${process.env.APP_URL}" style="display:inline-block;padding:12px 22px;font-size:13.5px;font-weight:600;color:#ffffff;text-decoration:none;">Open the board</a>
+      </td></tr>
+    </table>
+  </td></tr>
+
+  <tr><td style="background:#f7faf8;padding:16px 30px;border-top:1px solid #eef1ef;">
+    <div style="font-size:11px;color:#8a978f;line-height:1.6;">
+      Sent from ECE Projects. Change the day, time or recipients in Settings.
     </div>
-  </div>
-</div>`;
+  </td></tr>
+
+</table>
+<div style="height:26px;"></div>
+</td></tr>
+</table>`;
+
 
   const subject =
     openBlocks.length > 0
