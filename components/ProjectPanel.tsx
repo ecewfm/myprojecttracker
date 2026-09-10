@@ -465,7 +465,7 @@ export default function ProjectPanel({
   project: Project | null;
   members: Member[];
   onClose: () => void;
-  onChange: () => void;
+  onChange: (fresh?: Project) => void;
 }) {
   const toast = useToast();
   const [p, setP] = useState(project);
@@ -490,11 +490,44 @@ export default function ProjectPanel({
 
   if (!p) return null;
 
+  /**
+   * Pull the project again. Only needed when the shape changes — rows added,
+   * deleted or reordered. Simple edits use `patch` below and never hit the
+   * network twice.
+   */
   const refresh = async () => {
-    const fresh = await api<Project>(`/api/projects/${p.id}`);
+    const fresh = await api<Project>(`/api/projects/${p!.id}`);
     setP(fresh);
-    onChange();
+    onChange(fresh);
   };
+
+  /**
+   * Apply a change locally and let the write happen in the background.
+   * The screen updates immediately; if the write fails we reload the truth
+   * and say so, rather than leaving a lie on screen.
+   */
+  const patch = (
+    mutate: (draft: Project) => Project,
+    write: () => Promise<unknown>
+  ) => {
+    setP((prev) => {
+      if (!prev) return prev;
+      const next = mutate(structuredClone(prev));
+      onChange(next);
+      return next;
+    });
+    write().catch(async (e: any) => {
+      toast(e.message ?? "That didn't save", "err");
+      await refresh();
+    });
+  };
+
+  /** Walk every milestone, including sub-milestones. */
+  const mapMilestones = (
+    list: Milestone[],
+    fn: (m: Milestone) => Milestone
+  ): Milestone[] =>
+    list.map((m) => fn({ ...m, children: mapMilestones(m.children ?? [], fn) }));
 
   const column = STATUS_COLUMNS.find((c) => c.key === p.status);
   const doneCount = p.milestones.filter((m) => m.done).length;
@@ -526,40 +559,54 @@ export default function ProjectPanel({
     } catch (e: any) { toast(e.message, "err"); }
   }
 
-  async function toggleMilestone(id: string, done: boolean) {
-    setP((prev) => prev && {
-      ...prev,
-      milestones: prev.milestones.map((m) => (m.id === id ? { ...m, done } : m)),
-    });
-    try {
-      await api(`/api/milestones/${id}`, { method: "PATCH", body: { done } });
-      await refresh();
-    } catch (e: any) { toast(e.message, "err"); await refresh(); }
+  function toggleMilestone(id: string, done: boolean) {
+    patch(
+      (d) => {
+        d.milestones = mapMilestones(d.milestones, (m) =>
+          m.id === id ? { ...m, done } : m
+        );
+        // Progress counts top-level milestones only, same as the server.
+        const top = d.milestones;
+        d.percent = top.length
+          ? Math.round((top.filter((m) => m.done).length / top.length) * 100)
+          : 0;
+        return d;
+      },
+      () => api(`/api/milestones/${id}`, { method: "PATCH", body: { done } })
+    );
   }
 
-  async function saveNote(id: string, note: string) {
-    try {
-      await api(`/api/milestones/${id}`, { method: "PATCH", body: { note } });
-      setP((prev) => prev && {
-        ...prev,
-        milestones: prev.milestones.map((m) => (m.id === id ? { ...m, note } : m)),
-      });
-      onChange();
-    } catch (e: any) { toast(e.message, "err"); }
+  function saveNote(id: string, note: string) {
+    patch(
+      (d) => {
+        d.milestones = mapMilestones(d.milestones, (m) => (m.id === id ? { ...m, note } : m));
+        return d;
+      },
+      () => api(`/api/milestones/${id}`, { method: "PATCH", body: { note } })
+    );
   }
 
-  async function renameMilestone(id: string, name: string) {
-    try {
-      await api(`/api/milestones/${id}`, { method: "PATCH", body: { name } });
-      await refresh();
-    } catch (e: any) { toast(e.message, "err"); }
+  function renameMilestone(id: string, name: string) {
+    patch(
+      (d) => {
+        d.milestones = mapMilestones(d.milestones, (m) => (m.id === id ? { ...m, name } : m));
+        return d;
+      },
+      () => api(`/api/milestones/${id}`, { method: "PATCH", body: { name } })
+    );
   }
 
-  async function assignMilestone(id: string, memberIds: string[]) {
-    try {
-      await api(`/api/milestones/${id}`, { method: "PATCH", body: { assignee_ids: memberIds } });
-      await refresh();
-    } catch (e: any) { toast(e.message, "err"); }
+  function assignMilestone(id: string, memberIds: string[]) {
+    const people = members.filter((m) => memberIds.includes(m.id));
+    patch(
+      (d) => {
+        d.milestones = mapMilestones(d.milestones, (m) =>
+          m.id === id ? { ...m, assignees: people } : m
+        );
+        return d;
+      },
+      () => api(`/api/milestones/${id}`, { method: "PATCH", body: { assignee_ids: memberIds } })
+    );
   }
 
   /** Drop one milestone onto another to reorder within the same level. */
@@ -586,11 +633,16 @@ export default function ProjectPanel({
     } catch (e: any) { toast(e.message, "err"); }
   }
 
-  async function setMilestoneDue(id: string, date: string | null) {
-    try {
-      await api(`/api/milestones/${id}`, { method: "PATCH", body: { due_date: date } });
-      await refresh();
-    } catch (e: any) { toast(e.message, "err"); }
+  function setMilestoneDue(id: string, date: string | null) {
+    patch(
+      (d) => {
+        d.milestones = mapMilestones(d.milestones, (m) =>
+          m.id === id ? { ...m, due_date: date } : m
+        );
+        return d;
+      },
+      () => api(`/api/milestones/${id}`, { method: "PATCH", body: { due_date: date } })
+    );
   }
 
   async function moveMilestone(id: string, direction: "up" | "down") {
@@ -612,11 +664,26 @@ export default function ProjectPanel({
     } catch (e: any) { toast(e.message, "err"); }
   }
 
-  async function updateTask(id: string, patch: Record<string, unknown>) {
-    try {
-      await api(`/api/tasks/${id}`, { method: "PATCH", body: patch });
-      await refresh();
-    } catch (e: any) { toast(e.message, "err"); }
+  function updateTask(id: string, body: Record<string, unknown>) {
+    const people = Array.isArray(body.assignee_ids)
+      ? members.filter((m) => (body.assignee_ids as string[]).includes(m.id))
+      : null;
+
+    patch(
+      (d) => {
+        d.tasks = d.tasks.map((t) => {
+          if (t.id !== id) return t;
+          const next = { ...t };
+          if ("name" in body) next.name = body.name as string;
+          if ("note" in body) next.note = body.note as string;
+          if ("due_date" in body) next.due_date = (body.due_date as string) ?? null;
+          if (people) next.assignees = people;
+          return next;
+        });
+        return d;
+      },
+      () => api(`/api/tasks/${id}`, { method: "PATCH", body })
+    );
   }
 
   async function deleteTask(id: string, name: string) {
@@ -705,19 +772,28 @@ export default function ProjectPanel({
     );
   }
 
-  async function saveProjectField(patch: Record<string, unknown>, note?: string) {
-    try {
-      await api(`/api/projects/${p!.id}`, { method: "PATCH", body: patch });
-      await refresh();
-      if (note) toast(note);
-    } catch (e: any) { toast(e.message, "err"); }
+  function saveProjectField(body: Record<string, unknown>, note?: string) {
+    patch(
+      (d) => {
+        Object.assign(d, body);
+        if ("owner_id" in body) {
+          d.owner = members.find((m) => m.id === body.owner_id) ?? null;
+        }
+        return d;
+      },
+      () => api(`/api/projects/${p!.id}`, { method: "PATCH", body })
+    );
+    if (note) toast(note);
   }
 
-  async function toggleTask(id: string, done: boolean) {
-    try {
-      await api(`/api/tasks/${id}`, { method: "PATCH", body: { done } });
-      await refresh();
-    } catch (e: any) { toast(e.message, "err"); }
+  function toggleTask(id: string, done: boolean) {
+    patch(
+      (d) => {
+        d.tasks = d.tasks.map((t) => (t.id === id ? { ...t, done } : t));
+        return d;
+      },
+      () => api(`/api/tasks/${id}`, { method: "PATCH", body: { done } })
+    );
   }
 
   async function addTask() {
@@ -739,12 +815,12 @@ export default function ProjectPanel({
     } catch (e: any) { toast(e.message, "err"); }
   }
 
-  async function changeStatus(status: ProjectStatus) {
-    try {
-      await api(`/api/projects/${p!.id}`, { method: "PATCH", body: { status } });
-      await refresh();
-      toast(`Moved to ${STATUS_COLUMNS.find((c) => c.key === status)?.label}.`);
-    } catch (e: any) { toast(e.message, "err"); }
+  function changeStatus(status: ProjectStatus) {
+    patch(
+      (d) => { d.status = status; return d; },
+      () => api(`/api/projects/${p!.id}`, { method: "PATCH", body: { status } })
+    );
+    toast(`Moved to ${STATUS_COLUMNS.find((c) => c.key === status)?.label}.`);
   }
 
   async function runAnalysis() {
@@ -1209,6 +1285,19 @@ export default function ProjectPanel({
                 }}
               />
             </div>
+          </div>
+
+          {/* export */}
+          <div className="block">
+            <div className="block-head"><span className="block-title">Export</span></div>
+            <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 12, lineHeight: 1.6 }}>
+              Download this project as a workbook — milestones, action items,
+              roadblocks and who&rsquo;s assigned. Edit it and import it back from
+              the board to apply changes in bulk.
+            </div>
+            <a className="btn" href={`/api/projects/${p.id}/export`} style={{ textDecoration: "none", display: "inline-block" }}>
+              Download .xlsx
+            </a>
           </div>
 
           {/* share links */}

@@ -3,25 +3,26 @@
 import { useEffect, useState, useCallback } from "react";
 import { TopBar, ToastHost, api, useToast } from "@/components/Shell";
 import ProjectPanel from "@/components/ProjectPanel";
+import ImportDialog from "@/components/ImportDialog";
 import { STATUS_COLUMNS, type Project, type Member, type ProjectStatus } from "@/lib/types";
+import type { ProjectSummary } from "@/lib/data";
 import { zoneToday } from "@/lib/tz";
 
 function Card({
   p, onOpen, onDuplicate, onDelete,
 }: {
-  p: Project;
+  p: ProjectSummary;
   onOpen: () => void;
-  onDuplicate: (p: Project) => void;
-  onDelete: (p: Project) => void;
+  onDuplicate: (p: ProjectSummary) => void;
+  onDelete: (p: ProjectSummary) => void;
 }) {
-  const open = p.roadblocks.filter((r) => r.status !== "resolved");
-  const severe = open.some((r) => r.status === "open" || r.status === "escalated");
+  const open = p.openRoadblocks;
   const today = zoneToday();
   const late = p.due_date && p.due_date < today && p.percent < 100;
 
   return (
     <button
-      className={`card ${open.length ? "blocked" : ""}`}
+      className={`card ${open ? "blocked" : ""}`}
       onClick={onOpen}
       draggable
       onDragStart={(e) => {
@@ -71,10 +72,10 @@ function Card({
         </div>
       )}
 
-      {open.length > 0 && (
-        <div className={`flag ${severe ? "" : "amber"}`}>
+      {open > 0 && (
+        <div className="flag">
           <span className="pip" />
-          {open.length} roadblock{open.length > 1 ? "s" : ""}
+          {open} roadblock{open > 1 ? "s" : ""}
         </div>
       )}
 
@@ -84,8 +85,8 @@ function Card({
       </div>
 
       <div className="ticks">
-        {p.milestones.map((m) => (
-          <span key={m.id} className={`tick ${m.done ? "on" : m.note ? "note" : ""}`} />
+        {p.milestones.filter((m) => !m.sub).map((m) => (
+          <span key={m.id} className={`tick ${m.done ? "on" : m.hasNote ? "note" : ""}`} />
         ))}
       </div>
 
@@ -95,21 +96,23 @@ function Card({
 
 function BoardInner() {
   const toast = useToast();
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [selected, setSelected] = useState<Project | null>(null);
+  const [opening, setOpening] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [dragOver, setDragOver] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const [ps, ms] = await Promise.all([
-        api<Project[]>("/api/projects"),
+        api<ProjectSummary[]>("/api/projects"),
         api<Member[]>("/api/team"),
       ]);
       setProjects(ps);
       setMembers(ms);
-      setSelected((cur) => (cur ? ps.find((p) => p.id === cur.id) ?? null : null));
+
     } catch (e: any) {
       toast(e.message, "err");
     }
@@ -126,6 +129,15 @@ function BoardInner() {
       await load();
       toast("Project created with the standard ten milestones.");
     } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  /** The card only holds a summary; load the full project when it opens. */
+  async function openProject(id: string) {
+    setOpening(id);
+    try {
+      setSelected(await api<Project>(`/api/projects/${id}`));
+    } catch (e: any) { toast(e.message, "err"); }
+    setOpening(null);
   }
 
   async function moveProject(id: string, status: string) {
@@ -145,7 +157,7 @@ function BoardInner() {
     }
   }
 
-  async function duplicate(p: Project) {
+  async function duplicate(p: ProjectSummary) {
     try {
       await api(`/api/projects/${p.id}/duplicate`, { method: "POST" });
       await load();
@@ -153,7 +165,7 @@ function BoardInner() {
     } catch (e: any) { toast(e.message, "err"); }
   }
 
-  async function remove(p: Project) {
+  async function remove(p: ProjectSummary) {
     if (!confirm(`Delete "${p.title}" permanently? Its milestones, roadblocks, tasks and notes go with it.`)) return;
     if (!confirm("Last check — this can't be undone. Delete it?")) return;
     try {
@@ -163,13 +175,11 @@ function BoardInner() {
     } catch (e: any) { toast(e.message, "err"); }
   }
 
-  const blockers = projects.reduce(
-    (n, p) => n + p.roadblocks.filter((r) => r.status !== "resolved").length, 0
-  );
+  const blockers = projects.reduce((n, p) => n + p.openRoadblocks, 0);
 
   return (
     <div id="shell">
-      <TopBar onNew={newProject} />
+      <TopBar onNew={newProject} onImport={() => setImporting(true)} />
 
       <div className="strip">
         {STATUS_COLUMNS.map((c) => (
@@ -212,7 +222,7 @@ function BoardInner() {
                         <Card
                           key={p.id}
                           p={p}
-                          onOpen={() => setSelected(p)}
+                          onOpen={() => openProject(p.id)}
                           onDuplicate={duplicate}
                           onDelete={remove}
                         />
@@ -224,11 +234,18 @@ function BoardInner() {
         })}
       </div>
 
+      {importing && (
+        <ImportDialog onClose={() => setImporting(false)} onDone={load} />
+      )}
+
       <ProjectPanel
         project={selected}
         members={members}
-        onClose={() => setSelected(null)}
-        onChange={load}
+        onClose={() => { setSelected(null); load(); }}
+        onChange={(fresh) => {
+          // The panel hands back the updated project, so nothing refetches.
+          if (fresh) setSelected(fresh);
+        }}
       />
     </div>
   );

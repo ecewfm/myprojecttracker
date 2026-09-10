@@ -152,3 +152,82 @@ export async function nextRef(): Promise<string> {
 export const COLUMN_KEYS: ProjectStatus[] = [
   "todo", "pending", "dev", "testing", "done", "impl", "scrap",
 ];
+
+/* ══════════════════════════════════════════════════════════
+   Board and timeline summaries.
+
+   The full SELECT above pulls every note, roadblock detail and
+   employee record for every project — far more than a card needs,
+   and the reason the board felt slow. These queries fetch only
+   what's rendered, and the panel loads the full project on open.
+   ══════════════════════════════════════════════════════════ */
+
+const SUMMARY_SELECT = `
+  id, ref, title, status, due_date, priority, shared, labels, created_at,
+  owner:team_members!projects_owner_id_fkey ( id, name ),
+  project_members ( team_members ( id, name ) ),
+  milestones ( id, position, done, parent_id, due_date, note ),
+  tasks ( id, done, due_date ),
+  roadblocks ( id, status )
+`;
+
+export interface ProjectSummary {
+  id: string; ref: string; title: string; status: ProjectStatus;
+  due_date: string | null; created_at: string;
+  priority: boolean; shared: boolean;
+  labels: { name: string; color: string }[];
+  owner: { id: string; name: string } | null;
+  members: { id: string; name: string }[];
+  /** Top-level only, in order — what the card's tick row draws. */
+  milestones: {
+    id: string; done: boolean; hasNote: boolean;
+    due_date: string | null; sub: boolean;
+  }[];
+  percent: number;
+  openRoadblocks: number;
+  overdueTasks: number;
+  overdueMilestones: number;
+}
+
+export async function getProjectSummaries(today: string): Promise<ProjectSummary[]> {
+  const { data, error } = await db
+    .from("projects")
+    .select(SUMMARY_SELECT)
+    .eq("archived", false)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+
+  return (data ?? []).map((row: any) => {
+    const all = (row.milestones ?? []).sort((a: any, b: any) => a.position - b.position);
+    const top = all.filter((m: any) => !m.parent_id);
+
+    return {
+      id: row.id,
+      ref: row.ref,
+      title: row.title,
+      status: row.status,
+      due_date: row.due_date,
+      created_at: row.created_at,
+      priority: row.priority,
+      shared: row.shared,
+      labels: row.labels ?? [],
+      owner: row.owner ?? null,
+      members: (row.project_members ?? []).map((pm: any) => pm.team_members).filter(Boolean),
+      milestones: all.map((m: any) => ({
+        id: m.id,
+        done: m.done,
+        hasNote: !!(m.note && m.note.length),
+        due_date: m.due_date,
+        sub: !!m.parent_id,
+      })),
+      percent: pct(top),
+      openRoadblocks: (row.roadblocks ?? []).filter((r: any) => r.status !== "resolved").length,
+      overdueTasks: (row.tasks ?? []).filter(
+        (t: any) => !t.done && t.due_date && t.due_date < today
+      ).length,
+      overdueMilestones: all.filter(
+        (m: any) => !m.done && m.due_date && m.due_date < today
+      ).length,
+    };
+  });
+}

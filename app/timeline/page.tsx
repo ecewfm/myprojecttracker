@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { TopBar, ToastHost, api, useToast } from "@/components/Shell";
 import ProjectPanel from "@/components/ProjectPanel";
-import { STATUS_COLUMNS, type Project, type Member, type Milestone } from "@/lib/types";
+import { STATUS_COLUMNS, type Project, type Member } from "@/lib/types";
+import type { ProjectSummary } from "@/lib/data";
 import { zoneToday } from "@/lib/tz";
 
 const LIVE = ["todo", "pending", "dev", "testing"];
@@ -27,30 +28,21 @@ const parse = (s: string) => {
 // Dates render in the app timezone; see lib/tz.ts
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 
-/** Flatten a project's milestones, keeping sub-milestones marked. */
-function flatten(ms: Milestone[]) {
-  return ms.flatMap((m) => [
-    { ...m, sub: false },
-    ...(m.children ?? []).map((c) => ({ ...c, sub: true })),
-  ]);
-}
 
 /**
  * When a project starts. Nothing records this explicitly, so: the earliest
  * milestone due date if any milestone has one, otherwise the day the
  * project was created.
  */
-function startOf(p: Project): string {
-  const dates = flatten(p.milestones)
-    .map((m) => m.due_date)
-    .filter(Boolean) as string[];
+function startOf(p: ProjectSummary): string {
+  const dates = p.milestones.map((m) => m.due_date).filter(Boolean) as string[];
   if (dates.length) return dates.sort()[0];
   return p.created_at.slice(0, 10);
 }
 
 function Inner() {
   const toast = useToast();
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [selected, setSelected] = useState<Project | null>(null);
   const [weeks, setWeeks] = useState(16);
@@ -60,17 +52,22 @@ function Inner() {
   const load = useCallback(async () => {
     try {
       const [ps, ms] = await Promise.all([
-        api<Project[]>("/api/projects"),
+        api<ProjectSummary[]>("/api/projects"),
         api<Member[]>("/api/team"),
       ]);
       setProjects(ps);
       setMembers(ms);
-      setSelected((cur) => (cur ? ps.find((p) => p.id === cur.id) ?? null : null));
+
     } catch (e: any) { toast(e.message, "err"); }
     setLoading(false);
   }, [toast]);
 
   useEffect(() => { load(); }, [load]);
+
+  async function openProject(id: string) {
+    try { setSelected(await api<Project>(`/api/projects/${id}`)); }
+    catch (e: any) { toast(e.message, "err"); }
+  }
 
   const today = new Date();
   const todayIso = zoneToday();
@@ -94,20 +91,16 @@ function Inner() {
       .map((p) => {
         const start = startOf(p);
         const due = p.due_date ?? iso(addDays(parse(start), 60));
-        const flat = flatten(p.milestones);
-
         return {
           p,
           start,
           due,
           hasDue: !!p.due_date,
           late: !!p.due_date && p.due_date < todayIso && p.percent < 100,
-          milestones: flat.filter((m) => m.due_date),
-          roadblocks: p.roadblocks.filter((r) => r.status !== "resolved").length,
+          milestones: p.milestones.filter((m) => m.due_date),
+          roadblocks: p.openRoadblocks,
           // Delayed counts overdue action items and overdue milestones.
-          delayed:
-            p.tasks.filter((t) => !t.done && t.due_date && t.due_date < todayIso).length +
-            flat.filter((m) => !m.done && m.due_date && m.due_date < todayIso).length,
+          delayed: p.overdueTasks + p.overdueMilestones,
         };
       })
       .sort((a, b) => a.due.localeCompare(b.due));
@@ -175,7 +168,7 @@ function Inner() {
                     const l = pct(r.start);
                     const w = Math.max(1.5, pct(r.due) - l);
                     return (
-                      <tr key={r.p.id} onClick={() => setSelected(r.p)}>
+                      <tr key={r.p.id} onClick={() => openProject(r.p.id)}>
                         <td className="tl-name">
                           <div className="tl-t">
                             {r.p.title}
@@ -214,7 +207,7 @@ function Inner() {
                                   key={m.id}
                                   className={`tl-ms ${m.done ? "done" : ""} ${overdue ? "late" : ""} ${m.sub ? "sub" : ""}`}
                                   style={{ left: `${pct(m.due_date!)}%` }}
-                                  title={`${m.name} · ${m.due_date}${m.done ? " · done" : overdue ? " · overdue" : ""}`}
+                                  title={`${m.due_date}${m.done ? " · done" : overdue ? " · overdue" : ""}`}
                                 />
                               );
                             })}
@@ -258,8 +251,8 @@ function Inner() {
       <ProjectPanel
         project={selected}
         members={members}
-        onClose={() => setSelected(null)}
-        onChange={load}
+        onClose={() => { setSelected(null); load(); }}
+        onChange={(fresh) => { if (fresh) setSelected(fresh); }}
       />
     </div>
   );

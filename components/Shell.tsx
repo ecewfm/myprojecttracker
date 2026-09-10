@@ -57,7 +57,7 @@ const NAV = [
   { href: "/team", label: "Team" },
 ];
 
-export function TopBar({ onNew }: { onNew?: () => void }) {
+export function TopBar({ onNew, onImport }: { onNew?: () => void; onImport?: () => void }) {
   const path = usePathname();
   const router = useRouter();
 
@@ -81,6 +81,9 @@ export function TopBar({ onNew }: { onNew?: () => void }) {
       </div>
       <div className="bar-right">
         <Notifications />
+        {onImport && (
+          <button className="btn" onClick={onImport}>Import</button>
+        )}
         {onNew && (
           <button className="btn btn-solid" onClick={onNew}>
             New project

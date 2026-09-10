@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/supabase";
-import { getProjects, nextRef } from "@/lib/data";
+import { getProjects, getProjectSummaries, nextRef } from "@/lib/data";
+import { zoneToday } from "@/lib/tz";
 import { isSignedIn } from "@/lib/auth";
 
 const DEFAULT_MILESTONES = [
@@ -9,9 +10,15 @@ const DEFAULT_MILESTONES = [
   "QA & testing", "UAT with stakeholders", "Launch preparation",
 ];
 
-export async function GET() {
+/**
+ * Board and timeline get summaries — a fraction of the payload. Pass
+ * ?full=1 for the complete nested shape (used by the export).
+ */
+export async function GET(req: Request) {
   if (!(await isSignedIn())) return NextResponse.json({ error: "unauthorised" }, { status: 401 });
-  return NextResponse.json(await getProjects());
+
+  const full = new URL(req.url).searchParams.get("full") === "1";
+  return NextResponse.json(full ? await getProjects() : await getProjectSummaries(zoneToday()));
 }
 
 export async function POST(req: Request) {
