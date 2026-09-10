@@ -26,7 +26,7 @@ export interface Member {
 }
 export interface Milestone {
   id: string; position: number; name: string; note: string; done: boolean;
-  assignee: Member | null;
+  assignees: Member[];
   parent_id: string | null;
   due_date: string | null;
   children: Milestone[];
@@ -37,7 +37,7 @@ export interface Roadblock {
 }
 export interface Task {
   id: string; name: string; done: boolean; due_date: string | null;
-  assignee: Member | null; note: string;
+  assignees: Member[]; note: string;
 }
 export interface Project {
   id: string; ref: string; title: string; status: ProjectStatus;

@@ -28,7 +28,7 @@ export async function POST(req: Request) {
       })),
       tasks: p.tasks.map((t) => ({
         name: t.name, done: t.done, due_date: t.due_date,
-        assignee: t.assignee?.name ?? "unassigned",
+        assignee: t.assignees?.map((a) => a.name).join(", ") || "unassigned",
       })),
     }, settings?.analysis_prompt);
 

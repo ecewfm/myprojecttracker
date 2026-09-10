@@ -9,11 +9,11 @@ const SELECT = `
   project_members ( team_members ( id, name, email, active, job_position, account, site ) ),
   milestones (
     id, position, name, note, done, parent_id, due_date,
-    assignee:team_members!milestones_assignee_id_fkey ( id, name, email, active, job_position, account, site )
+    milestone_assignees ( team_members ( id, name, email, active, job_position, account, site ) )
   ),
   tasks (
-    id, name, done, due_date, note,
-    assignee:team_members!tasks_assignee_id_fkey ( id, name, email, active, job_position, account, site )
+    id, name, done, due_date, note, created_at,
+    task_assignees ( team_members ( id, name, email, active, job_position, account, site ) )
   ),
   roadblocks (
     id, title, detail, status, raised_at, target_date,
@@ -30,7 +30,11 @@ function shape(row: any): Project {
   // Milestones come back flat; nest sub-milestones under their parent.
   const flat = (row.milestones ?? [])
     .sort((a: any, b: any) => a.position - b.position)
-    .map((m: any) => ({ ...m, assignee: m.assignee ?? null, children: [] as any[] }));
+    .map((m: any) => ({
+      ...m,
+      assignees: (m.milestone_assignees ?? []).map((a: any) => a.team_members).filter(Boolean),
+      children: [] as any[],
+    }));
 
   const byId = new Map<string, any>(flat.map((m: any) => [m.id, m]));
   const milestones: any[] = [];
@@ -55,12 +59,14 @@ function shape(row: any): Project {
       .map((pm: any) => pm.team_members)
       .filter(Boolean),
     milestones,
-    tasks: (row.tasks ?? []).map((t: any) => ({
+    tasks: (row.tasks ?? [])
+      .sort((a: any, b: any) => (a.created_at ?? "").localeCompare(b.created_at ?? ""))
+      .map((t: any) => ({
       id: t.id,
       name: t.name,
       done: t.done,
       due_date: t.due_date,
-      assignee: t.assignee ?? null,
+      assignees: (t.task_assignees ?? []).map((a: any) => a.team_members).filter(Boolean),
       note: t.note ?? "",
     })),
     roadblocks: (row.roadblocks ?? [])

@@ -51,11 +51,17 @@ export async function POST(_: Request, { params }: { params: { id: string } }) {
       name: m.name,
       note: "",                       // notes describe the original run
       done: false,
-      assignee_id: m.assignee?.id ?? null,
       due_date: m.due_date,
     }).select("id").single();
 
-    if (copy) parentMap.set(m.id, copy.id);
+    if (!copy) continue;
+    parentMap.set(m.id, copy.id);
+
+    if (m.assignees?.length) {
+      await db.from("milestone_assignees").insert(
+        m.assignees.map((a) => ({ milestone_id: copy.id, member_id: a.id }))
+      );
+    }
   }
 
   // Sub-milestones, attached to their copied parent.
@@ -63,35 +69,40 @@ export async function POST(_: Request, { params }: { params: { id: string } }) {
     (m.children ?? []).map((c) => ({ parent: m.id, child: c }))
   );
 
-  if (children.length) {
-    await db.from("milestones").insert(
-      children
-        .filter(({ parent }) => parentMap.has(parent))
-        .map(({ parent, child }) => ({
-          project_id: project.id,
-          parent_id: parentMap.get(parent)!,
-          position: child.position,
-          name: child.name,
-          note: "",
-          done: false,
-          assignee_id: child.assignee?.id ?? null,
-          due_date: child.due_date,
-        }))
-    );
+  for (const { parent, child } of children) {
+    if (!parentMap.has(parent)) continue;
+    const { data: copy } = await db.from("milestones").insert({
+      project_id: project.id,
+      parent_id: parentMap.get(parent)!,
+      position: child.position,
+      name: child.name,
+      note: "",
+      done: false,
+      due_date: child.due_date,
+    }).select("id").single();
+
+    if (copy && child.assignees?.length) {
+      await db.from("milestone_assignees").insert(
+        child.assignees.map((a) => ({ milestone_id: copy.id, member_id: a.id }))
+      );
+    }
   }
 
   // Action items, reset and without their old dates.
-  if (src.tasks.length) {
-    await db.from("tasks").insert(
-      src.tasks.map((t) => ({
-        project_id: project.id,
-        name: t.name,
-        assignee_id: t.assignee?.id ?? null,
-        due_date: null,
-        done: false,
-        note: "",
-      }))
-    );
+  for (const t of src.tasks) {
+    const { data: copy } = await db.from("tasks").insert({
+      project_id: project.id,
+      name: t.name,
+      due_date: null,
+      done: false,
+      note: "",
+    }).select("id").single();
+
+    if (copy && t.assignees?.length) {
+      await db.from("task_assignees").insert(
+        t.assignees.map((a) => ({ task_id: copy.id, member_id: a.id }))
+      );
+    }
   }
 
   await log("duplicate", `Duplicated "${src.title}" as ${project.ref}`, project.id);

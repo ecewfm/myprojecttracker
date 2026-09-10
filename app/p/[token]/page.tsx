@@ -13,7 +13,7 @@ interface Block { id: string; title: string; detail: string; status: string; own
 interface Data {
   viewer: { id: string; name: string; email: string };
   project: {
-    ref: string; title: string; status: string; phase: string | null;
+    ref: string; title: string; status: string;
     percent: number; due_date: string | null; owner: string | null;
     milestones: Item[]; tasks: Item[]; roadblocks: Block[];
   };
@@ -97,7 +97,7 @@ export default function PublicProject() {
         <div className="pub-mark">ECE</div>
         <h1 className="pub-title">{p.title}</h1>
         <div className="pub-meta">
-          {p.ref} · {p.status}{p.phase ? ` · ${p.phase}` : ""}
+          {p.ref} · {p.status}
           {p.owner ? ` · Owner: ${p.owner}` : ""}
         </div>
 

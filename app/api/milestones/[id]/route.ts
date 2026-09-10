@@ -7,33 +7,43 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   if (!(await isSignedIn())) return NextResponse.json({ error: "unauthorised" }, { status: 401 });
   const body = await req.json();
 
-  // Remember who it was assigned to, so we only message on a real change.
-  const { data: before } = await db
-    .from(body.subproject ? "subproject_milestones" : "milestones")
-    .select("assignee_id").eq("id", params.id).maybeSingle();
+  // Who was already on it, so only newly added people get messaged.
+  const { data: existing } = await db
+    .from("milestone_assignees").select("member_id").eq("milestone_id", params.id);
+  const before = new Set((existing ?? []).map((r: any) => r.member_id));
 
   const patch: Record<string, unknown> = {};
   if ("note" in body) patch.note = body.note;
   if ("name" in body) patch.name = body.name;
-  if ("assignee_id" in body) patch.assignee_id = body.assignee_id || null;
+
   if ("due_date" in body) patch.due_date = body.due_date || null;
   if ("done" in body) {
     patch.done = body.done;
     patch.completed_at = body.done ? new Date().toISOString() : null;
   }
 
-  const table = body.subproject ? "subproject_milestones" : "milestones";
+  // Assignees live in their own table now.
+  if (Array.isArray(body.assignee_ids)) {
+    const wanted: string[] = body.assignee_ids.filter(Boolean);
+
+    await db.from("milestone_assignees").delete().eq("milestone_id", params.id);
+    if (wanted.length) {
+      await db.from("milestone_assignees").insert(
+        wanted.map((member_id) => ({ milestone_id: params.id, member_id }))
+      );
+    }
+
+    // Tell anyone newly added, once the write has landed.
+    for (const id of wanted) {
+      if (!before.has(id)) notifyMilestoneAssignment(params.id, id).catch(() => {});
+    }
+  }
+
   const { data, error } = await db
-    .from(table).update(patch).eq("id", params.id)
-    .select("id, position, name, note, done, due_date, assignee:team_members!milestones_assignee_id_fkey(id,name,email,active,job_position,account,site)").single();
+    .from("milestones").update(patch).eq("id", params.id)
+    .select("id, position, name, note, done, due_date").single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-
-  // Newly assigned to someone: give them a link and tell them.
-  const newAssignee = body.assignee_id;
-  if (!body.subproject && newAssignee && newAssignee !== before?.assignee_id) {
-    notifyMilestoneAssignment(params.id).catch(() => {});
-  }
 
   return NextResponse.json(data);
 }

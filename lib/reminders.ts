@@ -101,90 +101,92 @@ export async function runReminders() {
   // Reminders only go out during working hours in the app timezone, and the
   // per-item interval check below stops anyone being messaged repeatedly.
   const hour = zoneHour();
-  const START = Number(process.env.REMINDER_START_HOUR ?? 9);
-  const END = Number(process.env.REMINDER_END_HOUR ?? 17);
+  const START = settings.dm_start_hour ?? 9;
+  const END = settings.dm_end_hour ?? 17;
   if (hour < START || hour > END) {
-    return { sent: 0, skipped: `outside working hours (local hour ${hour})` };
+    return { sent: 0, skipped: `outside sending hours ${START}:00-${END}:00 (now ${hour}:00)` };
   }
 
   let sent = 0;
   const failures: string[] = [];
 
   // ── Open action items ───────────────────────────────
-  const { data: tasks } = await db
-    .from("tasks")
+  // An item can have several assignees. Each is nudged on their own
+  // schedule, so one person going quiet doesn't stop the others hearing.
+  const { data: taskRows } = await db
+    .from("task_assignees")
     .select(`
-      id, name, due_date, last_nudge_at, nudge_count,
-      assignee:team_members!tasks_assignee_id_fkey ( id, name, email ),
-      projects!inner ( id, title, reminders_on, archived )
-    `)
-    .eq("done", false);
+      member_id, last_nudge_at, nudge_count,
+      team_members ( id, name, email ),
+      tasks!inner (
+        id, name, due_date, done,
+        projects!inner ( id, title, reminders_on, archived )
+      )
+    `);
 
-  for (const t of (tasks ?? []) as any[]) {
-    if (!t.assignee?.email) continue;
+  for (const row of (taskRows ?? []) as any[]) {
+    const t = row.tasks, who = row.team_members;
+    if (!t || t.done || !who?.email) continue;
     if (!t.projects?.reminders_on || t.projects.archived) continue;
 
     const daysLeft = daysUntil(t.due_date);
     const wait = intervalHours(settings, daysLeft, false);
-    if (hoursSince(t.last_nudge_at) < wait) continue;
+    if (hoursSince(row.last_nudge_at) < wait) continue;
 
     try {
-      const url = await ensureShareUrl(t.projects.id, t.assignee.id);
-      await cliqDM(t.assignee.email, taskMessage(t, daysLeft, url));
-      await db.from("tasks")
-        .update({ last_nudge_at: new Date().toISOString(), nudge_count: t.nudge_count + 1 })
-        .eq("id", t.id);
-      await log("cliq_dm", `Task reminder to ${t.assignee.name} — ${t.name}`, t.projects.id);
+      const url = await ensureShareUrl(t.projects.id, who.id);
+      await cliqDM(who.email, taskMessage({ ...t, projects: t.projects }, daysLeft, url));
+      await db.from("task_assignees")
+        .update({ last_nudge_at: new Date().toISOString(), nudge_count: row.nudge_count + 1 })
+        .eq("task_id", t.id).eq("member_id", who.id);
+      await log("cliq_dm", `Task reminder to ${who.name} — ${t.name}`, t.projects.id);
       sent++;
 
-      // Unanswered three times running: raise it in the channel.
-      if (
-        settings.mention_in_group &&
-        t.nudge_count + 1 >= 3 &&
-        process.env.CLIQ_GROUP_CHANNEL
-      ) {
+      if (settings.mention_in_group && row.nudge_count + 1 >= 3 && process.env.CLIQ_GROUP_CHANNEL) {
         await cliqChannel(
           process.env.CLIQ_GROUP_CHANNEL,
-          `@${t.assignee.email} — "${t.name}" on *${t.projects.title}* has been open through ` +
-          `${t.nudge_count + 1} reminders. Flagging here so it doesn't sit.`
+          `@${who.email} — "${t.name}" on *${t.projects.title}* has been open through ` +
+          `${row.nudge_count + 1} reminders. Flagging here so it doesn't sit.`
         );
       }
     } catch (e: any) {
-      failures.push(`task ${t.id}: ${e.message}`);
+      failures.push(`task ${t.id}/${who.id}: ${e.message}`);
     }
   }
 
   // ── Open milestones with a deadline ─────────────────
   // Same escalating cadence as action items. Only milestones with both an
   // assignee and a due date are chased; the rest are just checklist items.
-  const { data: mstones } = await db
-    .from("milestones")
+  const { data: msRows } = await db
+    .from("milestone_assignees")
     .select(`
-      id, name, due_date, last_nudge_at, nudge_count,
-      assignee:team_members!milestones_assignee_id_fkey ( id, name, email ),
-      projects!inner ( id, title, reminders_on, archived )
-    `)
-    .eq("done", false)
-    .not("due_date", "is", null);
+      member_id, last_nudge_at, nudge_count,
+      team_members ( id, name, email ),
+      milestones!inner (
+        id, name, due_date, done,
+        projects!inner ( id, title, reminders_on, archived )
+      )
+    `);
 
-  for (const m of (mstones ?? []) as any[]) {
-    if (!m.assignee?.email) continue;
+  for (const row of (msRows ?? []) as any[]) {
+    const m = row.milestones, who = row.team_members;
+    if (!m || m.done || !m.due_date || !who?.email) continue;
     if (!m.projects?.reminders_on || m.projects.archived) continue;
 
     const daysLeft = daysUntil(m.due_date);
     const wait = intervalHours(settings, daysLeft, false);
-    if (hoursSince(m.last_nudge_at) < wait) continue;
+    if (hoursSince(row.last_nudge_at) < wait) continue;
 
     try {
-      const url = await ensureShareUrl(m.projects.id, m.assignee.id);
-      await cliqDM(m.assignee.email, milestoneMessage(m, daysLeft, url));
-      await db.from("milestones")
-        .update({ last_nudge_at: new Date().toISOString(), nudge_count: m.nudge_count + 1 })
-        .eq("id", m.id);
-      await log("cliq_dm", `Milestone reminder to ${m.assignee.name} — ${m.name}`, m.projects.id);
+      const url = await ensureShareUrl(m.projects.id, who.id);
+      await cliqDM(who.email, milestoneMessage({ ...m, projects: m.projects }, daysLeft, url));
+      await db.from("milestone_assignees")
+        .update({ last_nudge_at: new Date().toISOString(), nudge_count: row.nudge_count + 1 })
+        .eq("milestone_id", m.id).eq("member_id", who.id);
+      await log("cliq_dm", `Milestone reminder to ${who.name} — ${m.name}`, m.projects.id);
       sent++;
     } catch (e: any) {
-      failures.push(`milestone ${m.id}: ${e.message}`);
+      failures.push(`milestone ${m.id}/${who.id}: ${e.message}`);
     }
   }
 
@@ -276,63 +278,46 @@ export async function notifyRoadblock(
 }
 
 /** Fired when someone is newly assigned to a task. */
-export async function notifyAssignment(taskId: string) {
-  const { data: t } = await db
-    .from("tasks")
-    .select(`
-      id, name, due_date, assignee_id,
-      assignee:team_members!tasks_assignee_id_fkey ( name, email ),
-      projects ( id, title )
-    `)
-    .eq("id", taskId)
-    .single();
+export async function notifyAssignment(taskId: string, memberId: string) {
+  const [{ data: t }, { data: who }] = await Promise.all([
+    db.from("tasks").select("id, name, due_date, projects ( id, title )").eq("id", taskId).single(),
+    db.from("team_members").select("id, name, email").eq("id", memberId).single(),
+  ]);
 
   const task = t as any;
-  if (!task?.assignee?.email) return;
+  if (!task || !who?.email) return;
 
   // Make sure they have a way to close it before telling them about it.
-  const url = await ensureShareUrl(task.projects.id, task.assignee_id);
+  const url = await ensureShareUrl(task.projects.id, memberId);
 
   await cliqDM(
-    task.assignee.email,
+    who.email,
     `*${task.projects.title}* — you've been assigned: "${task.name}"` +
       (task.due_date ? `\nDue ${task.due_date}.` : "") +
       (url
         ? `\n\nMark it done here when you're finished:\n${url}`
         : `\nI'll follow up here until it's closed.`)
   );
-  await log(
-    "cliq_dm",
-    `Assignment sent to ${task.assignee.name} — ${task.name}`,
-    task.projects.id
-  );
+  await log("cliq_dm", `Assignment sent to ${who.name} — ${task.name}`, task.projects.id);
 }
 
 /** Fired when someone is newly assigned to a milestone. */
-export async function notifyMilestoneAssignment(milestoneId: string) {
-  const { data: m } = await db
-    .from("milestones")
-    .select(`
-      id, name, assignee_id,
-      assignee:team_members!milestones_assignee_id_fkey ( name, email ),
-      projects ( id, title )
-    `)
-    .eq("id", milestoneId)
-    .single();
+export async function notifyMilestoneAssignment(milestoneId: string, memberId: string) {
+  const [{ data: m }, { data: who }] = await Promise.all([
+    db.from("milestones").select("id, name, due_date, projects ( id, title )").eq("id", milestoneId).single(),
+    db.from("team_members").select("id, name, email").eq("id", memberId).single(),
+  ]);
 
   const ms = m as any;
-  if (!ms?.assignee?.email) return;
+  if (!ms || !who?.email) return;
 
-  const url = await ensureShareUrl(ms.projects.id, ms.assignee_id);
+  const url = await ensureShareUrl(ms.projects.id, memberId);
 
   await cliqDM(
-    ms.assignee.email,
+    who.email,
     `*${ms.projects.title}* — milestone assigned to you: "${ms.name}"` +
+      (ms.due_date ? `\nDue ${ms.due_date}.` : "") +
       (url ? `\n\nMark it complete here when it's done:\n${url}` : "")
   );
-  await log(
-    "cliq_dm",
-    `Milestone assigned to ${ms.assignee.name} — ${ms.name}`,
-    ms.projects.id
-  );
+  await log("cliq_dm", `Milestone assigned to ${who.name} — ${ms.name}`, ms.projects.id);
 }

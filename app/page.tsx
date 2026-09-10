@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { TopBar, ToastHost, api, useToast } from "@/components/Shell";
 import ProjectPanel from "@/components/ProjectPanel";
-import { STATUS_COLUMNS, type Project, type Member } from "@/lib/types";
+import { STATUS_COLUMNS, type Project, type Member, type ProjectStatus } from "@/lib/types";
 import { zoneToday } from "@/lib/tz";
 
 function Card({
@@ -20,7 +20,15 @@ function Card({
   const late = p.due_date && p.due_date < today && p.percent < 100;
 
   return (
-    <button className={`card ${open.length ? "blocked" : ""}`} onClick={onOpen}>
+    <button
+      className={`card ${open.length ? "blocked" : ""}`}
+      onClick={onOpen}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("text/plain", p.id);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+    >
       {/* Hidden until hover so the board reads the same at rest. */}
       <span className="card-acts">
         <span
@@ -81,7 +89,6 @@ function Card({
         ))}
       </div>
 
-      <div className="card-phase"><b>{p.phase ?? "No phase set"}</b></div>
     </button>
   );
 }
@@ -92,6 +99,7 @@ function BoardInner() {
   const [members, setMembers] = useState<Member[]>([]);
   const [selected, setSelected] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
+  const [dragOver, setDragOver] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -118,6 +126,23 @@ function BoardInner() {
       await load();
       toast("Project created with the standard ten milestones.");
     } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function moveProject(id: string, status: string) {
+    const proj = projects.find((x) => x.id === id);
+    if (!proj || proj.status === status) return;
+
+    // Move it on screen first; the write follows. A failure reloads the truth.
+    setProjects((prev) =>
+      prev.map((x) => (x.id === id ? { ...x, status: status as ProjectStatus } : x))
+    );
+    try {
+      await api(`/api/projects/${id}`, { method: "PATCH", body: { status } });
+      await load();
+    } catch (e: any) {
+      toast(e.message, "err");
+      await load();
+    }
   }
 
   async function duplicate(p: Project) {
@@ -163,7 +188,18 @@ function BoardInner() {
         {STATUS_COLUMNS.map((c) => {
           const list = projects.filter((p) => p.status === c.key);
           return (
-            <div key={c.key} className={`col ${c.dim ? "dim" : ""}`}>
+            <div
+              key={c.key}
+              className={`col ${c.dim ? "dim" : ""} ${dragOver === c.key ? "drop" : ""}`}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(c.key); }}
+              onDragLeave={() => setDragOver((v) => (v === c.key ? null : v))}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOver(null);
+                const id = e.dataTransfer.getData("text/plain");
+                if (id) moveProject(id, c.key);
+              }}
+            >
               <div className="col-head">
                 <span className="col-name">{c.label}</span>
                 <span className="col-count">{list.length}</span>

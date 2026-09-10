@@ -35,14 +35,13 @@ export async function POST(req: Request) {
         raised_at: r.raised_at, owner: r.owner?.name ?? "unassigned",
       })),
       tasks: p.tasks.map((t) => ({
-        name: t.name, done: t.done, due_date: t.due_date, assignee: t.assignee?.name ?? "unassigned",
+        name: t.name, done: t.done, due_date: t.due_date, assignee: t.assignees?.map((a) => a.name).join(", ") || "unassigned",
       })),
     }, settings?.analysis_prompt);
   } catch { /* post the status even if the AI part fails */ }
 
   const msg =
     `*${p.title}* — ${p.percent}% · ${col}\n` +
-    `Phase: ${p.phase ?? "not set"}\n` +
     `Open roadblocks: ${open.length}${open.length ? " (" + open.map((r) => r.title).join("; ") + ")" : ""}\n` +
     `Overdue items: ${overdue.length}` +
     (summary ? `\n\n${summary}` : "");

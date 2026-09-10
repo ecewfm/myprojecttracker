@@ -63,7 +63,6 @@ export async function analyseProject(
 
 Project: ${p.title}
 Board column: ${p.status}
-Current phase: ${p.phase ?? "not set"}
 Progress: ${p.percent}% (${p.milestones.filter((m) => m.done).length}/${p.milestones.length} milestones)
 Target date: ${p.due_date ?? "none set"}
 Today: ${zoneToday()} (${TZ})

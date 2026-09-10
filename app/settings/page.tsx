@@ -17,6 +17,9 @@ interface Settings {
   digest_recipients: string[];
   digest_sections: Record<string, boolean>;
   custom_labels: { name: string; color: string }[];
+  nearing_days: number;
+  dm_start_hour: number;
+  dm_end_hour: number;
   analysis_prompt: string;
   digest_prompt: string;
 }
@@ -179,6 +182,24 @@ function Inner() {
                 <div className="tog-sub">Stops the moment it's marked resolved</div>
               </div>
               <Toggle on={s.nudge_open_roadblocks} onChange={(v) => save({ nudge_open_roadblocks: v })} />
+            </div>
+          </div>
+
+          {/* deadline window */}
+          <div className="sect">
+            <div className="sect-title">Nearing deadlines</div>
+            <div className="sect-desc">
+              How far ahead the Deadlines tab looks. Overdue items always show,
+              whatever this is set to.
+            </div>
+            <div className="fld" style={{ maxWidth: 220 }}>
+              <label htmlFor="nearing">Show items due within</label>
+              <select id="nearing" value={s.nearing_days ?? 5}
+                onChange={(e) => save({ nearing_days: Number(e.target.value) }, "Window updated.")}>
+                {[2, 3, 5, 7, 10, 14, 21, 30].map((d) => (
+                  <option key={d} value={d}>{d} days</option>
+                ))}
+              </select>
             </div>
           </div>
 

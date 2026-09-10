@@ -76,9 +76,75 @@ function StatusControl({
 }
 
 /* ─────────── milestone with notes ─────────── */
+/* ─────────── multi-assignee picker ─────────── */
+function AssigneePicker({
+  selected, members, onChange, label = "Assigned to (optional)",
+}: {
+  selected: Member[];
+  members: Member[];
+  onChange: (ids: string[]) => void;
+  label?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const ids = new Set(selected.map((m) => m.id));
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  function toggle(id: string) {
+    const next = new Set(ids);
+    next.has(id) ? next.delete(id) : next.add(id);
+    onChange([...next]);
+  }
+
+  return (
+    <div className="ap" ref={ref}>
+      <label>{label}</label>
+      <button type="button" className="ap-field" onClick={() => setOpen((o) => !o)}>
+        {selected.length === 0
+          ? <span className="ap-none">No one</span>
+          : <span className="ap-chips">
+              {selected.map((m) => (
+                <span key={m.id} className="ap-chip">{m.name}</span>
+              ))}
+            </span>}
+        <span className="ap-car">▾</span>
+      </button>
+
+      {open && (
+        <div className="ap-menu">
+          {members.length === 0 && <div className="ap-empty">Nobody on the team yet.</div>}
+          {members.map((m) => (
+            <button
+              type="button"
+              key={m.id}
+              className="ap-opt"
+              onClick={() => toggle(m.id)}
+            >
+              <span className={`ms-box ${ids.has(m.id) ? "on" : ""}`}>{ids.has(m.id) ? "✓" : ""}</span>
+              <span className="ap-opt-name">
+                {m.name}
+                {m.job_position && <span className="ap-opt-role">{m.job_position}</span>}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function MilestoneRow({
   m, total, index, members, depth = 0,
-  onToggle, onNote, onRename, onAssign, onDelete, onMove, onAddChild, onDueDate,
+  onToggle, onNote, onRename, onAssign, onDelete, onMove, onAddChild, onDueDate, onDrop,
 }: {
   m: Milestone;
   total: number; index: number;
@@ -87,9 +153,10 @@ function MilestoneRow({
   onToggle: (id: string, done: boolean) => void;
   onNote: (id: string, note: string) => void;
   onRename: (id: string, name: string) => void;
-  onAssign: (id: string, memberId: string | null) => void;
+  onAssign: (id: string, memberIds: string[]) => void;
   onDelete: (id: string) => void;
   onMove: (id: string, direction: "up" | "down") => void;
+  onDrop?: (dragId: string, dropId: string) => void;
   onAddChild: (parentId: string) => void;
   onDueDate: (id: string, date: string | null) => void;
 }) {
@@ -118,7 +185,24 @@ function MilestoneRow({
 
   return (
     <>
-      <div className={`ms-item ${open ? "open" : ""} ${isSub ? "ms-sub" : ""}`}>
+      <div
+        className={`ms-item ${open ? "open" : ""} ${isSub ? "ms-sub" : ""}`}
+        draggable={!open}
+        onDragStart={(e) => {
+          e.stopPropagation();
+          e.dataTransfer.setData("text/plain", m.id);
+          e.dataTransfer.effectAllowed = "move";
+        }}
+        onDragOver={(e) => { if (onDrop) { e.preventDefault(); e.currentTarget.classList.add("drag-target"); } }}
+        onDragLeave={(e) => e.currentTarget.classList.remove("drag-target")}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          e.currentTarget.classList.remove("drag-target");
+          const dragId = e.dataTransfer.getData("text/plain");
+          if (dragId && dragId !== m.id && onDrop) onDrop(dragId, m.id);
+        }}
+      >
         <div
           className="ms-head"
           role="button"
@@ -139,7 +223,13 @@ function MilestoneRow({
             {m.children?.length > 0 && (
               <span className="ms-kidcount">{doneKids}/{m.children.length}</span>
             )}
-            {m.assignee && <span className="ms-person">{m.assignee.name.split(" ")[0]}</span>}
+            {m.assignees?.length > 0 && (
+              <span className="ms-person">
+                {m.assignees.length === 1
+                  ? m.assignees[0].name.split(" ")[0]
+                  : `${m.assignees.length} people`}
+              </span>
+            )}
             {note && <span className="ms-hasnote">Note</span>}
             {m.due_date && (
               <span style={{
@@ -172,16 +262,11 @@ function MilestoneRow({
 
             <div className="fld-2" style={{ marginBottom: 12 }}>
               <div>
-                <label htmlFor={`assignee-${m.id}`}>Assigned to (optional)</label>
-                <select
-                  id={`assignee-${m.id}`}
-                  value={m.assignee?.id ?? ""}
-                  onChange={(e) => onAssign(m.id, e.target.value || null)}
-                  style={{ width: "100%" }}
-                >
-                  <option value="">No one</option>
-                  {members.map((mem) => <option key={mem.id} value={mem.id}>{mem.name}</option>)}
-                </select>
+                <AssigneePicker
+                  selected={m.assignees ?? []}
+                  members={members}
+                  onChange={(ids) => onAssign(m.id, ids)}
+                />
               </div>
               <div>
                 <label htmlFor={`due-${m.id}`}>Due (optional)</label>
@@ -231,6 +316,7 @@ function MilestoneRow({
           onMove={onMove}
           onAddChild={onAddChild}
           onDueDate={onDueDate}
+          onDrop={onDrop}
         />
       ))}
     </>
@@ -239,7 +325,7 @@ function MilestoneRow({
 
 /* ─────────── action item, expandable ─────────── */
 function TaskRow({
-  t, members, today, onToggle, onUpdate, onDelete,
+  t, members, today, onToggle, onUpdate, onDelete, onDrop,
 }: {
   t: Task;
   members: Member[];
@@ -247,6 +333,7 @@ function TaskRow({
   onToggle: (id: string, done: boolean) => void;
   onUpdate: (id: string, patch: Record<string, unknown>) => void;
   onDelete: (id: string, name: string) => void;
+  onDrop?: (dragId: string, dropId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(t.name);
@@ -270,7 +357,22 @@ function TaskRow({
   const overdue = !t.done && t.due_date && t.due_date < today;
 
   return (
-    <div className={`ms-item ${open ? "open" : ""}`}>
+    <div
+      className={`ms-item ${open ? "open" : ""}`}
+      draggable={!open}
+      onDragStart={(e) => {
+        e.dataTransfer.setData("text/plain", t.id);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      onDragOver={(e) => { if (onDrop) { e.preventDefault(); e.currentTarget.classList.add("drag-target"); } }}
+      onDragLeave={(e) => e.currentTarget.classList.remove("drag-target")}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.currentTarget.classList.remove("drag-target");
+        const dragId = e.dataTransfer.getData("text/plain");
+        if (dragId && dragId !== t.id && onDrop) onDrop(dragId, t.id);
+      }}
+    >
       <div
         className="ms-head"
         role="button" tabIndex={0}
@@ -287,7 +389,13 @@ function TaskRow({
         </span>
         <span className={`ms-name ${t.done ? "on" : ""}`}>{t.name}</span>
         <span className="ms-flags">
-          {t.assignee && <span className="ms-person">{t.assignee.name.split(" ")[0]}</span>}
+          {t.assignees?.length > 0 && (
+            <span className="ms-person">
+              {t.assignees.length === 1
+                ? t.assignees[0].name.split(" ")[0]
+                : `${t.assignees.length} people`}
+            </span>
+          )}
           {note && <span className="ms-hasnote">Note</span>}
           {t.due_date && (
             <span style={{ color: overdue ? "var(--red)" : undefined, fontWeight: overdue ? 600 : 400 }}>
@@ -310,16 +418,12 @@ function TaskRow({
 
           <div className="fld-2" style={{ marginBottom: 12 }}>
             <div>
-              <label htmlFor={`tassignee-${t.id}`}>Assigned to</label>
-              <select
-                id={`tassignee-${t.id}`}
-                value={t.assignee?.id ?? ""}
-                onChange={(e) => onUpdate(t.id, { assignee_id: e.target.value || null })}
-                style={{ width: "100%" }}
-              >
-                <option value="">No one</option>
-                {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </select>
+              <AssigneePicker
+                selected={t.assignees ?? []}
+                members={members}
+                onChange={(ids) => onUpdate(t.id, { assignee_ids: ids })}
+                label="Assigned to"
+              />
             </div>
             <div>
               <label htmlFor={`tdue-${t.id}`}>Due</label>
@@ -369,7 +473,7 @@ export default function ProjectPanel({
   const [rbDraft, setRbDraft] = useState({ title: "", detail: "", owner_id: "", status: "open" as RoadblockStatus });
   const [analysing, setAnalysing] = useState(false);
   const [meeting, setMeeting] = useState({ start: "", minutes: 30 });
-  const [taskDraft, setTaskDraft] = useState({ name: "", assignee_id: "", due_date: "" });
+  const [taskDraft, setTaskDraft] = useState<{ name: string; assignee_ids: string[]; due_date: string }>({ name: "", assignee_ids: [], due_date: "" });
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [links, setLinks] = useState<any[]>([]);
 
@@ -451,9 +555,24 @@ export default function ProjectPanel({
     } catch (e: any) { toast(e.message, "err"); }
   }
 
-  async function assignMilestone(id: string, memberId: string | null) {
+  async function assignMilestone(id: string, memberIds: string[]) {
     try {
-      await api(`/api/milestones/${id}`, { method: "PATCH", body: { assignee_id: memberId } });
+      await api(`/api/milestones/${id}`, { method: "PATCH", body: { assignee_ids: memberIds } });
+      await refresh();
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  /** Drop one milestone onto another to reorder within the same level. */
+  async function reorderMilestone(dragId: string, dropId: string) {
+    try {
+      await api("/api/milestones/reorder", { method: "POST", body: { id: dragId, before: dropId } });
+      await refresh();
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function reorderTask(dragId: string, dropId: string) {
+    try {
+      await api("/api/tasks/reorder", { method: "POST", body: { id: dragId, before: dropId } });
       await refresh();
     } catch (e: any) { toast(e.message, "err"); }
   }
@@ -609,14 +728,14 @@ export default function ProjectPanel({
         body: {
           project_id: p!.id,
           name: taskDraft.name,
-          assignee_id: taskDraft.assignee_id || null,
+          assignee_ids: taskDraft.assignee_ids,
           due_date: taskDraft.due_date || null,
         },
       });
-      setTaskDraft({ name: "", assignee_id: "", due_date: "" });
+      setTaskDraft({ name: "", assignee_ids: [], due_date: "" });
       setShowTaskForm(false);
       await refresh();
-      toast(taskDraft.assignee_id ? "Added. The assignee was messaged on Cliq." : "Action item added.");
+      toast(taskDraft.assignee_ids.length ? "Added. Everyone assigned was messaged on Cliq." : "Action item added.");
     } catch (e: any) { toast(e.message, "err"); }
   }
 
@@ -715,19 +834,6 @@ export default function ProjectPanel({
                     onBlur={(e) => {
                       const v = e.target.value.trim();
                       if (v && v !== p.title) saveProjectField({ title: v }, "Renamed.");
-                    }}
-                    style={{ border: "1px solid var(--g-brd-2)", background: "rgba(255,255,255,.5)", borderRadius: 7, padding: "4px 8px", fontSize: 12, fontWeight: 500, textAlign: "right", maxWidth: 240 }}
-                  />
-                </div>
-                <div className="row">
-                  <span className="row-k">Current phase</span>
-                  <input
-                    defaultValue={p.phase ?? ""}
-                    key={p.id + (p.phase ?? "")}
-                    placeholder="Not set"
-                    onBlur={(e) => {
-                      const v = e.target.value.trim();
-                      if (v !== (p.phase ?? "")) saveProjectField({ phase: v || null }, "Phase updated.");
                     }}
                     style={{ border: "1px solid var(--g-brd-2)", background: "rgba(255,255,255,.5)", borderRadius: 7, padding: "4px 8px", fontSize: 12, fontWeight: 500, textAlign: "right", maxWidth: 240 }}
                   />
@@ -867,6 +973,7 @@ export default function ProjectPanel({
                 onMove={moveMilestone}
                 onAddChild={addSubMilestone}
                 onDueDate={setMilestoneDue}
+                onDrop={reorderMilestone}
               />
             ))}
           </div>
@@ -894,6 +1001,7 @@ export default function ProjectPanel({
                 onToggle={toggleTask}
                 onUpdate={updateTask}
                 onDelete={deleteTask}
+                onDrop={reorderTask}
               />
             ))}
 
@@ -902,10 +1010,26 @@ export default function ProjectPanel({
                 <input placeholder="What needs doing?" value={taskDraft.name}
                   onChange={(e) => setTaskDraft({ ...taskDraft, name: e.target.value })} />
                 <div className="rb-add-row">
-                  <select value={taskDraft.assignee_id}
-                    onChange={(e) => setTaskDraft({ ...taskDraft, assignee_id: e.target.value })}>
-                    <option value="">Assign to…</option>
-                    {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      if (!e.target.value) return;
+                      setTaskDraft((d) => ({
+                        ...d,
+                        assignee_ids: d.assignee_ids.includes(e.target.value)
+                          ? d.assignee_ids
+                          : [...d.assignee_ids, e.target.value],
+                      }));
+                      e.target.value = "";
+                    }}>
+                    <option value="">
+                      {taskDraft.assignee_ids.length
+                        ? `${taskDraft.assignee_ids.length} assigned — add another`
+                        : "Assign to…"}
+                    </option>
+                    {members
+                      .filter((m) => !taskDraft.assignee_ids.includes(m.id))
+                      .map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
                   </select>
                   <input type="date" value={taskDraft.due_date}
                     onChange={(e) => setTaskDraft({ ...taskDraft, due_date: e.target.value })} />

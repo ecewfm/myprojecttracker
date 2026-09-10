@@ -88,8 +88,7 @@ export async function buildDigest() {
       ${active.map((p) => `
         <tr style="border-bottom:1px solid #eef1ef;">
           <td style="padding:10px 0;font-size:13px;font-weight:500;">${esc(p.title)}
-            <div style="font-size:11px;color:#6b8177;font-weight:400;">${esc(p.phase ?? "")}</div>
-          </td>
+                      </td>
           <td style="padding:10px 0;text-align:right;width:150px;">
             <div style="display:inline-flex;align-items:center;gap:9px;">
               ${bar(p.percent)}
@@ -121,7 +120,7 @@ export async function buildDigest() {
       ${overdue.map((t) => `
         <tr style="border-bottom:1px solid #eef1ef;">
           <td style="padding:9px 0;font-size:13px;">${esc(t.name)}
-            <div style="font-size:11px;color:#6b8177;">${esc(t.project)} · ${esc(t.assignee?.name ?? "unassigned")}</div>
+            <div style="font-size:11px;color:#6b8177;">${esc(t.project)} · ${esc(t.assignees?.map((a) => a.name).join(", ") || "unassigned")}</div>
           </td>
           <td style="padding:9px 0;text-align:right;font-size:12px;color:#b8453a;">${t.due_date}</td>
         </tr>`).join("")}
@@ -196,7 +195,7 @@ export async function buildProjectEmail(projectId: string) {
           raised_at: r.raised_at, owner: r.owner?.name ?? "unassigned",
         })),
         tasks: p.tasks.map((t) => ({
-          name: t.name, done: t.done, due_date: t.due_date, assignee: t.assignee?.name ?? "unassigned",
+          name: t.name, done: t.done, due_date: t.due_date, assignee: t.assignees?.map((a) => a.name).join(", ") || "unassigned",
         })),
       }, settings?.digest_prompt);
     } catch { /* still send without it */ }
@@ -241,7 +240,7 @@ export async function buildProjectEmail(projectId: string) {
     <h2 style="font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:#6b8177;margin:0 0 10px;">Overdue action items</h2>
     <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
       ${overdue.map((t) => `<tr style="border-bottom:1px solid #eef1ef;">
-        <td style="padding:8px 0;font-size:13px;">${esc(t.name)}<div style="font-size:11px;color:#6b8177;">${esc(t.assignee?.name ?? "unassigned")}</div></td>
+        <td style="padding:8px 0;font-size:13px;">${esc(t.name)}<div style="font-size:11px;color:#6b8177;">${esc(t.assignees?.map((a) => a.name).join(", ") || "unassigned")}</div></td>
         <td style="padding:8px 0;text-align:right;font-size:12px;color:#b8453a;">${t.due_date}</td></tr>`).join("")}
     </table>` : ""}
 
