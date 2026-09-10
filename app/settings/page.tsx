@@ -157,7 +157,7 @@ function Inner() {
 
             <div className="fld fld-2">
               <div>
-                <label htmlFor="dmstart">Only send between</label>
+                <label htmlFor="dmstart">Send reminders at</label>
                 <select id="dmstart" value={s.dm_start_hour ?? 9}
                   onChange={(e) => save({ dm_start_hour: Number(e.target.value) }, "Send window updated.")}>
                   {Array.from({ length: 24 }, (_, h) => (
@@ -166,7 +166,7 @@ function Inner() {
                 </select>
               </div>
               <div>
-                <label htmlFor="dmend">and</label>
+                <label htmlFor="dmend">Second send, escalated only</label>
                 <select id="dmend" value={s.dm_end_hour ?? 17}
                   onChange={(e) => save({ dm_end_hour: Number(e.target.value) }, "Send window updated.")}>
                   {Array.from({ length: 24 }, (_, h) => (
@@ -176,8 +176,10 @@ function Inner() {
               </div>
             </div>
             <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: -6, marginBottom: 16 }}>
-              No reminder goes out before or after these hours, {zoneLabel()} time.
-              Resending from the Deadlines tab ignores this.
+              Everything open is messaged once at the first time, {zoneLabel()}. The second
+              time only picks up items inside the escalation window above, so nothing on a
+              normal footing is messaged more than once a day. Set both to the same hour to
+              turn the second pass off. Resending from the Deadlines tab ignores this.
             </div>
 
             <div className="tog-row">

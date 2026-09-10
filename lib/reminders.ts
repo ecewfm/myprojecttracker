@@ -100,12 +100,46 @@ export async function runReminders() {
   // The cron fires every hour so daylight saving never shifts the schedule.
   // Reminders only go out during working hours in the app timezone, and the
   // per-item interval check below stops anyone being messaged repeatedly.
+  // Reminders go out at set times, not "any hour the interval happens to
+  // elapse". The cron still runs hourly; everything else is ignored.
+  //
+  //   dm_start_hour  the daily send — every open item, once
+  //   dm_end_hour    a second pass, escalated items only
+  //
+  // Anything not escalating is therefore messaged exactly once a day.
   const hour = zoneHour();
-  const START = settings.dm_start_hour ?? 9;
-  const END = settings.dm_end_hour ?? 17;
-  if (hour < START || hour > END) {
-    return { sent: 0, skipped: `outside sending hours ${START}:00-${END}:00 (now ${hour}:00)` };
+  const primaryHour = settings.dm_start_hour ?? 9;
+  const secondHour = settings.dm_end_hour ?? 16;
+  const isPrimary = hour === primaryHour;
+  const isSecond = hour === secondHour && secondHour !== primaryHour;
+
+  if (!isPrimary && !isSecond) {
+    return {
+      sent: 0,
+      skipped: `not a send time (now ${hour}:00; sends at ${primaryHour}:00` +
+        (secondHour !== primaryHour ? ` and ${secondHour}:00 for escalated items` : "") + ")",
+    };
   }
+
+  /** Is this item on the escalated cadence right now? */
+  const escalating = (daysLeft: number | null, isRoadblock: boolean) =>
+    isRoadblock ||
+    (daysLeft !== null && daysLeft <= (settings.escalate_within_days ?? 3));
+
+  /**
+   * Whether an item is due a message in this slot.
+   *
+   * On the primary pass the configured interval applies, so "every other day"
+   * really does skip a day. On the second pass the slot itself is the limit —
+   * it happens once daily and only takes escalated items — so we just guard
+   * against double-sending to someone who was messaged minutes ago.
+   */
+  const due = (lastNudge: string | null, daysLeft: number | null, isRoadblock: boolean) => {
+    const since = hoursSince(lastNudge);
+    if (isSecond) return since >= 4;
+    // An hour of tolerance: a run at exactly 24.0h should not be skipped.
+    return since >= intervalHours(settings, daysLeft, isRoadblock) - 1;
+  };
 
   let sent = 0;
   const failures: string[] = [];
@@ -130,8 +164,10 @@ export async function runReminders() {
     if (!t.projects?.reminders_on || t.projects.archived) continue;
 
     const daysLeft = daysUntil(t.due_date);
-    const wait = intervalHours(settings, daysLeft, false);
-    if (hoursSince(row.last_nudge_at) < wait) continue;
+    const hot = escalating(daysLeft, false);
+    // The second pass is for escalated items only.
+    if (isSecond && !hot) continue;
+    if (!due(row.last_nudge_at, daysLeft, false)) continue;
 
     try {
       const url = await ensureShareUrl(t.projects.id, who.id);
@@ -174,8 +210,9 @@ export async function runReminders() {
     if (!m.projects?.reminders_on || m.projects.archived) continue;
 
     const daysLeft = daysUntil(m.due_date);
-    const wait = intervalHours(settings, daysLeft, false);
-    if (hoursSince(row.last_nudge_at) < wait) continue;
+    const hot = escalating(daysLeft, false);
+    if (isSecond && !hot) continue;
+    if (!due(row.last_nudge_at, daysLeft, false)) continue;
 
     try {
       const url = await ensureShareUrl(m.projects.id, who.id);
@@ -205,8 +242,7 @@ export async function runReminders() {
       if (!r.owner?.email) continue;
       if (!r.projects?.reminders_on || r.projects.archived) continue;
 
-      const wait = intervalHours(settings, daysUntil(r.target_date), true);
-      if (hoursSince(r.last_nudge_at) < wait) continue;
+      if (!due(r.last_nudge_at, daysUntil(r.target_date), true)) continue;
 
       try {
         const url = await ensureShareUrl(r.projects.id, r.owner.id);

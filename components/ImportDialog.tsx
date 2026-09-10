@@ -30,6 +30,29 @@ function plural(n: number, word: string) {
   return `${n} ${word}${n === 1 ? "" : word.endsWith("item") ? "s" : "s"}`;
 }
 
+/**
+ * Read a response that might not be JSON. When a function times out or
+ * crashes, the platform returns an HTML error page — parsing that as JSON
+ * produced the useless "Unexpected token" message people were seeing.
+ */
+async function readResponse(res: Response, fallback: string) {
+  const text = await res.text();
+  try {
+    const json = JSON.parse(text);
+    if (!res.ok) throw new Error(json.error ?? fallback);
+    return json;
+  } catch (e: any) {
+    if (e instanceof SyntaxError) {
+      throw new Error(
+        res.status === 504 || /timeout|FUNCTION_INVOCATION/i.test(text)
+          ? "The import took too long and was cut off. Nothing was saved — try splitting the file into smaller chunks."
+          : `${fallback} (server returned ${res.status})`
+      );
+    }
+    throw e;
+  }
+}
+
 export default function ImportDialog({
   onClose, onDone,
 }: {
@@ -52,9 +75,7 @@ export default function ImportDialog({
       fd.append("file", f);
       fd.append("mode", "preview");
       const res = await fetch("/api/import", { method: "POST", body: fd });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "That file couldn't be read.");
-      setPreview(json);
+      setPreview(await readResponse(res, "That file couldn't be read."));
     } catch (e: any) {
       toast(e.message, "err");
       setFile(null);
@@ -71,9 +92,7 @@ export default function ImportDialog({
       fd.append("mode", "apply");
       fd.append("notify", String(notify));
       const res = await fetch("/api/import", { method: "POST", body: fd });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "The import failed.");
-      setResult(json);
+      setResult(await readResponse(res, "The import failed."));
       onDone();
     } catch (e: any) {
       toast(e.message, "err");

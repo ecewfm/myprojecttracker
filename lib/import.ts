@@ -365,218 +365,290 @@ export async function applyImport(
     }
   }
 
-  // ── milestones: parents first so children can reference them ──
-  const idMap = new Map<string, string>();     // sheet ID → real ID
-  const nameToId = new Map<string, string>();  // milestone name → real ID
+  // ── milestones ──
+  //
+  // Batched. Row-by-row this was four or five round trips each, so a 45-row
+  // sheet meant ~300 sequential queries and the function timed out before
+  // finishing. Now it's a handful of queries whatever the file size.
+  const idMap = new Map<string, string>();
+  const nameToId = new Map<string, string>();
 
-  // Milestones already on the project can be parents too, so seed the map
-  // before processing any rows.
   {
     const { data: current } = await db.from("milestones")
       .select("id, name").eq("project_id", projectId).is("parent_id", null);
-    for (const m of current ?? []) {
-      nameToId.set(String(m.name).trim().toLowerCase(), m.id);
-    }
+    for (const m of current ?? []) nameToId.set(String(m.name).trim().toLowerCase(), m.id);
   }
-  const rows = parsed.milestones.filter((r) => r["Milestone"] || r["ID"]);
-  const parents = rows.filter((r) => !parentRef(r));
-  const children = rows.filter((r) => parentRef(r));
-  let position = 0;
 
-  for (const pass of [parents, children]) {
-    for (const r of pass) {
-      const sheetId = r["ID"];
+  const msRows = parsed.milestones.filter((r) => r["Milestone"] || r["ID"]);
+
+  const msDel = msRows.filter((r) => isDelete(r) && r["ID"]).map((r) => r["ID"]);
+  if (msDel.length) {
+    await db.from("milestones").delete().in("id", msDel).eq("project_id", projectId);
+    result.deleted += msDel.length;
+  }
+
+  const liveMs = msRows.filter((r) => !isDelete(r) && r["Milestone"]);
+
+  // Resolve every email once, up front, so the write loops never wait on it.
+  {
+    const emails = new Set<string>();
+    for (const r of liveMs) splitEmails(r["Assigned emails"]).forEach((e) => emails.add(e));
+    for (const r of parsed.tasks) splitEmails(r["Assigned emails"]).forEach((e) => emails.add(e));
+    for (const r of parsed.roadblocks) splitEmails(r["Owner email"]).forEach((e) => emails.add(e));
+    for (const e of emails) await memberId(e);
+  }
+
+  let position = 1000;
+
+  async function writeLevel(rows: ParsedRow[], resolveParent: boolean) {
+    const toInsert: any[] = [];
+    const toUpdate: any[] = [];
+
+    for (const r of rows) {
       const name = r["Milestone"];
-
-      if (isDelete(r)) {
-        if (sheetId) {
-          await db.from("milestones").delete().eq("id", sheetId).eq("project_id", projectId);
-          result.deleted++;
-        }
-        continue;
-      }
-      if (!name) continue;
-
-      // Resolve the parent by whatever the row points at: an id we just
-      // created, an id that already exists, or — most often — a name.
-      const ref = parentRef(r);
       let parentId: string | null = null;
 
-      if (ref) {
+      if (resolveParent) {
+        const ref = parentRef(r);
         parentId =
-          idMap.get(ref) ??                    // parent created in this import
-          nameToId.get(ref.toLowerCase()) ??   // parent matched by name
-          (ref.includes("-") ? ref : null);    // a raw id typed in
-
+          idMap.get(ref) ??
+          nameToId.get(ref.toLowerCase()) ??
+          (ref.includes("-") ? ref : null);
         if (!parentId) {
           result.problems.push(
-            `Sub-milestone "${name}": no parent milestone called "${ref}" — created at the top level instead.`
+            `Sub-milestone "${name}": no parent called "${ref}" — created at the top level.`
           );
         }
       }
 
-      const fields: Record<string, unknown> = {
+      const fields = {
         name,
         done: toBool(r["Done"]),
         due_date: toDate(r["Due date"]),
         note: r["Notes"] ?? "",
         parent_id: parentId,
+        project_id: projectId,
       };
 
-      let realId = sheetId;
+      if (r["ID"]) toUpdate.push({ id: r["ID"], ...fields });
+      else { position++; toInsert.push({ ...fields, position }); }
+    }
 
-      if (sheetId) {
-        const { error } = await db.from("milestones")
-          .update(fields).eq("id", sheetId).eq("project_id", projectId);
-        if (error) { result.problems.push(`Milestone "${name}": ${error.message}`); continue; }
-        result.updated++;
-      } else {
-        position++;
-        const { data, error } = await db.from("milestones")
-          .insert({ ...fields, project_id: projectId, position: position + 1000 })
-          .select("id").single();
-        if (error || !data) { result.problems.push(`Milestone "${name}": ${error?.message}`); continue; }
-        realId = data.id;
-        result.created++;
+    if (toUpdate.length) {
+      const { error } = await db.from("milestones").upsert(toUpdate);
+      if (error) result.problems.push(`Milestones: ${error.message}`);
+      else result.updated += toUpdate.length;
+      for (const u of toUpdate) {
+        idMap.set(u.id, u.id);
+        if (!u.parent_id) nameToId.set(String(u.name).trim().toLowerCase(), u.id);
       }
+    }
 
-      if (sheetId) idMap.set(sheetId, realId!);
-      // A child later in the file may name this row as its parent.
-      if (!parentId) nameToId.set(name.trim().toLowerCase(), realId!);
-
-      // assignees
-      const ids = await idsFor(r["Assigned emails"]);
-      const { data: before } = await db.from("milestone_assignees")
-        .select("member_id").eq("milestone_id", realId!);
-      const had = new Set((before ?? []).map((b: any) => b.member_id));
-
-      await db.from("milestone_assignees").delete().eq("milestone_id", realId!);
-      if (ids.length) {
-        await db.from("milestone_assignees").insert(
-          ids.map((member_id) => ({ milestone_id: realId!, member_id }))
-        );
-      }
-
-      if (opts.notify) {
-        const { notifyMilestoneAssignment } = await import("./reminders");
-        for (const id of ids) {
-          if (!had.has(id)) {
-            notifyMilestoneAssignment(realId!, id).catch(() => {});
-            result.notified++;
-          }
+    if (toInsert.length) {
+      const { data, error } = await db.from("milestones")
+        .insert(toInsert).select("id, name, parent_id");
+      if (error) result.problems.push(`Milestones: ${error.message}`);
+      else {
+        result.created += data?.length ?? 0;
+        for (const row of data ?? []) {
+          if (!row.parent_id) nameToId.set(String(row.name).trim().toLowerCase(), row.id);
         }
       }
     }
   }
 
-  // ── action items ──
-  for (const r of parsed.tasks) {
-    const sheetId = r["ID"];
-    const name = r["Action item"];
+  await writeLevel(liveMs.filter((r) => !parentRef(r)), false);
+  await writeLevel(liveMs.filter((r) => parentRef(r)), true);
 
-    if (isDelete(r)) {
-      if (sheetId) {
-        await db.from("tasks").delete().eq("id", sheetId).eq("project_id", projectId);
-        result.deleted++;
+  // Assignees for every touched milestone, in three queries rather than 3n.
+  {
+    const { data: allMs } = await db.from("milestones")
+      .select("id, name").eq("project_id", projectId);
+    const byName = new Map<string, string>();
+    for (const m of allMs ?? []) byName.set(String(m.name).trim().toLowerCase(), m.id);
+
+    const targets: { id: string; emails: string[] }[] = [];
+    for (const r of liveMs) {
+      const id = r["ID"] || byName.get(String(r["Milestone"]).trim().toLowerCase());
+      if (id) targets.push({ id, emails: splitEmails(r["Assigned emails"]) });
+    }
+
+    const touched = targets.map((t) => t.id);
+    if (touched.length) {
+      const { data: before } = await db.from("milestone_assignees")
+        .select("milestone_id, member_id").in("milestone_id", touched);
+
+      const had = new Map<string, Set<string>>();
+      for (const bRow of before ?? []) {
+        const set = had.get(bRow.milestone_id) ?? new Set<string>();
+        set.add(bRow.member_id); had.set(bRow.milestone_id, set);
       }
-      continue;
-    }
-    if (!name) continue;
 
-    const fields: Record<string, unknown> = {
-      name,
-      done: toBool(r["Done"]),
-      due_date: toDate(r["Due date"]),
-      note: r["Notes"] ?? "",
-    };
+      await db.from("milestone_assignees").delete().in("milestone_id", touched);
 
-    let realId = sheetId;
+      const inserts: { milestone_id: string; member_id: string }[] = [];
+      const fresh: { itemId: string; memberId: string }[] = [];
 
-    if (sheetId) {
-      const { error } = await db.from("tasks")
-        .update(fields).eq("id", sheetId).eq("project_id", projectId);
-      if (error) { result.problems.push(`Action item "${name}": ${error.message}`); continue; }
-      result.updated++;
-    } else {
-      const { data, error } = await db.from("tasks")
-        .insert({ ...fields, project_id: projectId }).select("id").single();
-      if (error || !data) { result.problems.push(`Action item "${name}": ${error?.message}`); continue; }
-      realId = data.id;
-      result.created++;
-    }
+      for (const t of targets) {
+        for (const email of t.emails) {
+          const mid = await memberId(email);
+          if (!mid) continue;
+          inserts.push({ milestone_id: t.id, member_id: mid });
+          if (!had.get(t.id)?.has(mid)) fresh.push({ itemId: t.id, memberId: mid });
+        }
+      }
 
-    const ids = await idsFor(r["Assigned emails"]);
-    const { data: before } = await db.from("task_assignees")
-      .select("member_id").eq("task_id", realId!);
-    const had = new Set((before ?? []).map((b: any) => b.member_id));
+      if (inserts.length) await db.from("milestone_assignees").insert(inserts);
 
-    await db.from("task_assignees").delete().eq("task_id", realId!);
-    if (ids.length) {
-      await db.from("task_assignees").insert(
-        ids.map((member_id) => ({ task_id: realId!, member_id }))
-      );
-    }
-
-    if (opts.notify) {
-      const { notifyAssignment } = await import("./reminders");
-      for (const id of ids) {
-        if (!had.has(id)) {
-          notifyAssignment(realId!, id).catch(() => {});
+      if (opts.notify && fresh.length) {
+        const { notifyMilestoneAssignment } = await import("./reminders");
+        for (const f of fresh) {
+          notifyMilestoneAssignment(f.itemId, f.memberId).catch(() => {});
           result.notified++;
         }
       }
     }
   }
 
-  // ── roadblocks ──
-  for (const r of parsed.roadblocks) {
-    const sheetId = r["ID"];
-    const title2 = r["Roadblock"];
+  // ── action items, batched ──
+  {
+    const tRows = parsed.tasks.filter((r) => r["Action item"] || r["ID"]);
 
-    if (isDelete(r)) {
-      if (sheetId) {
-        await db.from("roadblocks").delete().eq("id", sheetId).eq("project_id", projectId);
-        result.deleted++;
-      }
-      continue;
+    const del = tRows.filter((r) => isDelete(r) && r["ID"]).map((r) => r["ID"]);
+    if (del.length) {
+      await db.from("tasks").delete().in("id", del).eq("project_id", projectId);
+      result.deleted += del.length;
     }
-    if (!title2) continue;
 
-    const ownerE = splitEmails(r["Owner email"])[0];
-    const oid = ownerE ? await memberId(ownerE) : null;
-    const st = (r["Status"] || "open").toLowerCase();
-    const validRb = ["open", "progress", "escalated", "resolved"];
+    const liveT = tRows.filter((r) => !isDelete(r) && r["Action item"]);
+    const toUpdate: any[] = [];
+    const toInsert: any[] = [];
 
-    const fields: Record<string, unknown> = {
-      title: title2,
-      detail: r["Detail"] ?? "",
-      status: validRb.includes(st) ? st : "open",
-      owner_id: oid,
-      target_date: toDate(r["Target date"]),
-    };
+    for (const r of liveT) {
+      const fields = {
+        name: r["Action item"],
+        done: toBool(r["Done"]),
+        due_date: toDate(r["Due date"]),
+        note: r["Notes"] ?? "",
+        project_id: projectId,
+      };
+      if (r["ID"]) toUpdate.push({ id: r["ID"], ...fields });
+      else toInsert.push(fields);
+    }
 
-    if (sheetId) {
-      const { error } = await db.from("roadblocks")
-        .update(fields).eq("id", sheetId).eq("project_id", projectId);
-      if (error) result.problems.push(`Roadblock "${title2}": ${error.message}`);
-      else result.updated++;
-    } else {
-      const { error } = await db.from("roadblocks")
-        .insert({ ...fields, project_id: projectId });
-      if (error) result.problems.push(`Roadblock "${title2}": ${error.message}`);
-      else result.created++;
+    if (toUpdate.length) {
+      const { error } = await db.from("tasks").upsert(toUpdate);
+      if (error) result.problems.push(`Action items: ${error.message}`);
+      else result.updated += toUpdate.length;
+    }
+    if (toInsert.length) {
+      const { data, error } = await db.from("tasks").insert(toInsert).select("id");
+      if (error) result.problems.push(`Action items: ${error.message}`);
+      else result.created += data?.length ?? 0;
+    }
+
+    const { data: allT } = await db.from("tasks").select("id, name").eq("project_id", projectId);
+    const byName = new Map<string, string>();
+    for (const t of allT ?? []) byName.set(String(t.name).trim().toLowerCase(), t.id);
+
+    const targets: { id: string; emails: string[] }[] = [];
+    for (const r of liveT) {
+      const id = r["ID"] || byName.get(String(r["Action item"]).trim().toLowerCase());
+      if (id) targets.push({ id, emails: splitEmails(r["Assigned emails"]) });
+    }
+
+    const touched = targets.map((t) => t.id);
+    if (touched.length) {
+      const { data: before } = await db.from("task_assignees")
+        .select("task_id, member_id").in("task_id", touched);
+
+      const had = new Map<string, Set<string>>();
+      for (const bRow of before ?? []) {
+        const set = had.get(bRow.task_id) ?? new Set<string>();
+        set.add(bRow.member_id); had.set(bRow.task_id, set);
+      }
+
+      await db.from("task_assignees").delete().in("task_id", touched);
+
+      const inserts: { task_id: string; member_id: string }[] = [];
+      const fresh: { itemId: string; memberId: string }[] = [];
+
+      for (const t of targets) {
+        for (const email of t.emails) {
+          const mid = await memberId(email);
+          if (!mid) continue;
+          inserts.push({ task_id: t.id, member_id: mid });
+          if (!had.get(t.id)?.has(mid)) fresh.push({ itemId: t.id, memberId: mid });
+        }
+      }
+
+      if (inserts.length) await db.from("task_assignees").insert(inserts);
+
+      if (opts.notify && fresh.length) {
+        const { notifyAssignment } = await import("./reminders");
+        for (const f of fresh) {
+          notifyAssignment(f.itemId, f.memberId).catch(() => {});
+          result.notified++;
+        }
+      }
     }
   }
 
-  // Renumber milestones so imported rows sit in sheet order.
-  const { data: allMs } = await db.from("milestones")
-    .select("id, position, parent_id").eq("project_id", projectId).order("position");
-  let n = 0, sub = 0;
-  for (const m of allMs ?? []) {
-    const next = m.parent_id ? ++sub : ++n;
-    if (m.position !== next) {
-      await db.from("milestones").update({ position: next }).eq("id", m.id);
+  // ── roadblocks, batched ──
+  {
+    const rRows = parsed.roadblocks.filter((r) => r["Roadblock"] || r["ID"]);
+
+    const del = rRows.filter((r) => isDelete(r) && r["ID"]).map((r) => r["ID"]);
+    if (del.length) {
+      await db.from("roadblocks").delete().in("id", del).eq("project_id", projectId);
+      result.deleted += del.length;
     }
+
+    const liveR = rRows.filter((r) => !isDelete(r) && r["Roadblock"]);
+    const valid = ["open", "progress", "escalated", "resolved"];
+    const toUpdate: any[] = [];
+    const toInsert: any[] = [];
+
+    for (const r of liveR) {
+      const ownerE = splitEmails(r["Owner email"])[0];
+      const st = (r["Status"] || "open").toLowerCase();
+      const fields = {
+        title: r["Roadblock"],
+        detail: r["Detail"] ?? "",
+        status: valid.includes(st) ? st : "open",
+        owner_id: ownerE ? await memberId(ownerE) : null,
+        target_date: toDate(r["Target date"]),
+        project_id: projectId,
+      };
+      if (r["ID"]) toUpdate.push({ id: r["ID"], ...fields });
+      else toInsert.push(fields);
+    }
+
+    if (toUpdate.length) {
+      const { error } = await db.from("roadblocks").upsert(toUpdate);
+      if (error) result.problems.push(`Roadblocks: ${error.message}`);
+      else result.updated += toUpdate.length;
+    }
+    if (toInsert.length) {
+      const { error } = await db.from("roadblocks").insert(toInsert);
+      if (error) result.problems.push(`Roadblocks: ${error.message}`);
+      else result.created += toInsert.length;
+    }
+  }
+
+  // Renumber so imported rows sit in sheet order — one upsert, not one
+  // update per milestone.
+  {
+    const { data: ordered } = await db.from("milestones")
+      .select("id, position, parent_id").eq("project_id", projectId).order("position");
+
+    let n = 0, sub = 0;
+    const renumbered = (ordered ?? [])
+      .map((m: any) => ({ id: m.id, position: m.parent_id ? ++sub : ++n, prev: m.position }))
+      .filter((m) => m.position !== m.prev)
+      .map(({ id, position }) => ({ id, position }));
+
+    if (renumbered.length) await db.from("milestones").upsert(renumbered);
   }
 
   await log(
