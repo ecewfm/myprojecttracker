@@ -1,6 +1,7 @@
 import { db, log } from "./supabase";
 import { cliqDM, cliqChannel } from "./zoho";
 import { ensureShareUrl } from "./ensure-link";
+import { DigestBatch } from "./digest-batch";
 import { daysUntilInZone, isWeekdayInZone, zoneHour } from "./tz";
 
 // Day maths runs in the app's timezone (see lib/tz.ts), so "due today"
@@ -144,6 +145,10 @@ export async function runReminders() {
   let sent = 0;
   const failures: string[] = [];
 
+  // Everything open for one person on one project goes out as a single
+  // message. Roadblocks stay separate — those are urgent enough on their own.
+  const batch = new DigestBatch();
+
   // ── Open action items ───────────────────────────────
   // An item can have several assignees. Each is nudged on their own
   // schedule, so one person going quiet doesn't stop the others hearing.
@@ -170,13 +175,14 @@ export async function runReminders() {
     if (!due(row.last_nudge_at, daysLeft, false)) continue;
 
     try {
-      const url = await ensureShareUrl(t.projects.id, who.id);
-      await cliqDM(who.email, taskMessage({ ...t, projects: t.projects }, daysLeft, url));
+      batch.add(t.projects.id, who.id, {
+        kind: "task",
+        name: t.name,
+        due: t.due_date,
+      });
       await db.from("task_assignees")
         .update({ last_nudge_at: new Date().toISOString(), nudge_count: row.nudge_count + 1 })
         .eq("task_id", t.id).eq("member_id", who.id);
-      await log("cliq_dm", `Task reminder to ${who.name} — ${t.name}`, t.projects.id);
-      sent++;
 
       if (settings.mention_in_group && row.nudge_count + 1 >= 3 && process.env.CLIQ_GROUP_CHANNEL) {
         await cliqChannel(
@@ -215,13 +221,14 @@ export async function runReminders() {
     if (!due(row.last_nudge_at, daysLeft, false)) continue;
 
     try {
-      const url = await ensureShareUrl(m.projects.id, who.id);
-      await cliqDM(who.email, milestoneMessage({ ...m, projects: m.projects }, daysLeft, url));
+      batch.add(m.projects.id, who.id, {
+        kind: "milestone",
+        name: m.name,
+        due: m.due_date,
+      });
       await db.from("milestone_assignees")
         .update({ last_nudge_at: new Date().toISOString(), nudge_count: row.nudge_count + 1 })
         .eq("milestone_id", m.id).eq("member_id", who.id);
-      await log("cliq_dm", `Milestone reminder to ${who.name} — ${m.name}`, m.projects.id);
-      sent++;
     } catch (e: any) {
       failures.push(`milestone ${m.id}/${who.id}: ${e.message}`);
     }
@@ -257,6 +264,9 @@ export async function runReminders() {
       }
     }
   }
+
+  // Send the collected reminders — one message per person per project.
+  sent += await batch.flush("still open for you");
 
   return { sent, failures };
 }

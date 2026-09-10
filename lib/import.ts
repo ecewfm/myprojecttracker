@@ -1,4 +1,5 @@
 import { db, log } from "./supabase";
+import { DigestBatch } from "./digest-batch";
 import { getProject, nextRef } from "./data";
 import { parseWorkbook, toDate, toBool, splitEmails, type Parsed, type ParsedRow } from "./workbook";
 import type { ProjectStatus } from "./types";
@@ -282,6 +283,10 @@ export async function applyImport(
     peopleAdded: [], notified: 0, problems: [],
   };
 
+  // Collect everyone's new assignments and send one message each at the end,
+  // rather than a message per item.
+  const batch = new DigestBatch();
+
   /** Resolve an email to a member id, creating the person if they're new. */
   async function memberId(email: string): Promise<string | null> {
     const key = email.toLowerCase();
@@ -488,15 +493,36 @@ export async function applyImport(
 
   // Assignees for every touched milestone, in three queries rather than 3n.
   {
+    // Match on parent AND name. Keying on name alone collided whenever two
+    // sub-milestones shared a name under different parents — "Receiving
+    // leader named" exists under several transitions — so one row took the
+    // assignees and the others were left blank.
     const { data: allMs } = await db.from("milestones")
-      .select("id, name").eq("project_id", projectId);
-    const byName = new Map<string, string>();
-    for (const m of allMs ?? []) byName.set(String(m.name).trim().toLowerCase(), m.id);
+      .select("id, name, parent_id").eq("project_id", projectId);
+
+    const byKey = new Map<string, string>();
+    for (const m of allMs ?? []) byKey.set(keyOf(String(m.name), m.parent_id), m.id);
 
     const targets: { id: string; emails: string[] }[] = [];
     for (const r of liveMs) {
-      const id = r["ID"] || byName.get(String(r["Milestone"]).trim().toLowerCase());
+      let id: string | undefined = r["ID"] || undefined;
+
+      if (!id) {
+        // Resolve the row's parent the same way the write pass did, so the
+        // key matches the milestone that was actually created.
+        const ref = parentRef(r);
+        const parentId = ref
+          ? idMap.get(ref) ?? nameToId.get(ref.toLowerCase()) ?? (ref.includes("-") ? ref : null)
+          : null;
+        id = byKey.get(keyOf(String(r["Milestone"]), parentId));
+      }
+
       if (id) targets.push({ id, emails: splitEmails(r["Assigned emails"]) });
+      else {
+        result.problems.push(
+          `Couldn't match "${r["Milestone"]}" back to a milestone — its assignees weren't set.`
+        );
+      }
     }
 
     const touched = targets.map((t) => t.id);
@@ -527,10 +553,16 @@ export async function applyImport(
       if (inserts.length) await db.from("milestone_assignees").insert(inserts);
 
       if (opts.notify && fresh.length) {
-        const { notifyMilestoneAssignment } = await import("./reminders");
+        const byId = new Map(
+          (allMs ?? []).map((m: any) => [m.id, m])
+        );
         for (const f of fresh) {
-          notifyMilestoneAssignment(f.itemId, f.memberId).catch(() => {});
-          result.notified++;
+          const m = byId.get(f.itemId) as any;
+          batch.add(projectId, f.memberId, {
+            kind: "milestone",
+            name: m?.name ?? "a milestone",
+            due: m?.due_date ?? null,
+          });
         }
       }
     }
@@ -622,10 +654,14 @@ export async function applyImport(
       if (inserts.length) await db.from("task_assignees").insert(inserts);
 
       if (opts.notify && fresh.length) {
-        const { notifyAssignment } = await import("./reminders");
+        const byId = new Map((allT ?? []).map((t: any) => [t.id, t]));
         for (const f of fresh) {
-          notifyAssignment(f.itemId, f.memberId).catch(() => {});
-          result.notified++;
+          const t = byId.get(f.itemId) as any;
+          batch.add(projectId, f.memberId, {
+            kind: "task",
+            name: t?.name ?? "an action item",
+            due: t?.due_date ?? null,
+          });
         }
       }
     }
@@ -695,6 +731,11 @@ export async function applyImport(
       .map(({ id, position }) => ({ id, position }));
 
     if (renumbered.length) await db.from("milestones").upsert(renumbered);
+  }
+
+  // One message per person now that every row is written.
+  if (opts.notify) {
+    result.notified = await batch.flush("assigned to you");
   }
 
   await log(
