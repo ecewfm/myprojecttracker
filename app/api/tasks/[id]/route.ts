@@ -32,9 +32,15 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     }
   }
 
-  const { data, error } = await db
-    .from("tasks").update(patch).eq("id", params.id)
-    .select("id, name, done, due_date, note").single();
+  // Same as milestones: assignee-only changes touch no columns on the row,
+  // and an empty UPDATE returns nothing for .single() to coerce.
+  const hasColumnChanges = Object.keys(patch).length > 0;
+
+  const { data, error } = hasColumnChanges
+    ? await db.from("tasks").update(patch).eq("id", params.id)
+        .select("id, name, done, due_date, note").single()
+    : await db.from("tasks").select("id, name, done, due_date, note")
+        .eq("id", params.id).single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 

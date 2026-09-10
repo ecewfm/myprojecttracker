@@ -39,9 +39,16 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     }
   }
 
-  const { data, error } = await db
-    .from("milestones").update(patch).eq("id", params.id)
-    .select("id, position, name, note, done, due_date").single();
+  // Changing only the assignees leaves nothing to update on the row itself.
+  // An empty UPDATE returns no rows, which makes .single() throw — so read
+  // the row instead of writing it when there are no column changes.
+  const hasColumnChanges = Object.keys(patch).length > 0;
+
+  const { data, error } = hasColumnChanges
+    ? await db.from("milestones").update(patch).eq("id", params.id)
+        .select("id, position, name, note, done, due_date").single()
+    : await db.from("milestones").select("id, position, name, note, done, due_date")
+        .eq("id", params.id).single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
