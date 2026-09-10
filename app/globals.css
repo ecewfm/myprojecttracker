@@ -946,3 +946,21 @@ button:disabled { opacity:.5; cursor:not-allowed; }
   border-color:rgba(184,69,58,.35);
   color:#8c2f26;
 }
+
+/* A milestone whose completion comes from its children — reflects, not sets. */
+.ms-box.derived { cursor:default; opacity:.9; }
+.ms-box.derived:not(.on) {
+  background:repeating-linear-gradient(
+    -45deg, rgba(63,122,92,.10) 0 3px, transparent 3px 6px
+  );
+  border-color:rgba(63,122,92,.35);
+}
+.ms-kidcount.full {
+  background:rgba(63,122,92,.16);
+  border-color:rgba(63,122,92,.34);
+  color:#2f4f47;
+}
+.pub-derived {
+  font-size:11.5px; color:var(--ink-3); font-style:italic;
+  white-space:nowrap; flex-shrink:0;
+}

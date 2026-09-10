@@ -18,6 +18,23 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 
   if ("due_date" in body) patch.due_date = body.due_date || null;
   if ("done" in body) {
+    // A milestone with children is complete only when they all are, so its
+    // own checkbox isn't the source of truth. Refuse rather than store a
+    // value the rest of the app would immediately contradict.
+    if (body.done) {
+      const { data: kids } = await db
+        .from("milestones").select("id, done, name").eq("parent_id", params.id);
+
+      const pending = (kids ?? []).filter((k: any) => !k.done);
+      if (pending.length) {
+        return NextResponse.json({
+          error:
+            `This milestone has ${pending.length} sub-milestone` +
+            `${pending.length === 1 ? "" : "s"} still open. ` +
+            `It completes on its own once they're all done.`,
+        }, { status: 400 });
+      }
+    }
     patch.done = body.done;
     patch.completed_at = body.done ? new Date().toISOString() : null;
   }

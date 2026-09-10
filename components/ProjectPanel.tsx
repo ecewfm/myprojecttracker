@@ -182,6 +182,7 @@ function MilestoneRow({
 
   const isSub = depth > 0;
   const doneKids = m.children?.filter((c) => c.done).length ?? 0;
+  const hasKids = (m.children?.length ?? 0) > 0;
 
   return (
     <>
@@ -210,18 +211,37 @@ function MilestoneRow({
           onClick={() => setOpen((o) => !o)}
           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen((o) => !o); } }}
         >
-          <span
-            className={`ms-box ${m.done ? "on" : ""}`}
-            role="checkbox" aria-checked={m.done} tabIndex={0}
-            onClick={(e) => { e.stopPropagation(); onToggle(m.id, !m.done); }}
-            onKeyDown={(e) => { if (e.key === " ") { e.preventDefault(); e.stopPropagation(); onToggle(m.id, !m.done); } }}
-          >
-            {m.done ? "✓" : ""}
-          </span>
+          {hasKids ? (
+            // Completion is derived from the children, so this reflects
+            // rather than sets. Clicking it would assert something they
+            // contradict.
+            <span
+              className={`ms-box derived ${m.done ? "on" : ""}`}
+              title={
+                m.done
+                  ? "Complete — every sub-milestone is done"
+                  : `${doneKids} of ${m.children.length} sub-milestones done. This completes on its own.`
+              }
+              aria-label={`${doneKids} of ${m.children.length} sub-milestones complete`}
+            >
+              {m.done ? "✓" : ""}
+            </span>
+          ) : (
+            <span
+              className={`ms-box ${m.done ? "on" : ""}`}
+              role="checkbox" aria-checked={m.done} tabIndex={0}
+              onClick={(e) => { e.stopPropagation(); onToggle(m.id, !m.done); }}
+              onKeyDown={(e) => { if (e.key === " ") { e.preventDefault(); e.stopPropagation(); onToggle(m.id, !m.done); } }}
+            >
+              {m.done ? "✓" : ""}
+            </span>
+          )}
           <span className={`ms-name ${m.done ? "on" : ""}`}>{m.name}</span>
           <span className="ms-flags">
-            {m.children?.length > 0 && (
-              <span className="ms-kidcount">{doneKids}/{m.children.length}</span>
+            {hasKids && (
+              <span className={`ms-kidcount ${m.done ? "full" : ""}`}>
+                {doneKids}/{m.children.length}
+              </span>
             )}
             {m.assignees?.length > 0 && (
               <span className="ms-person">

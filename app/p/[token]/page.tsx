@@ -125,21 +125,34 @@ export default function PublicProject() {
             </div>
           )}
 
-          {myMs.map((m) => (
-            <div key={m.id} className="pub-item mine">
-              <div className="pub-item-main">
-                <div className="pub-item-name">{m.name}</div>
-                <div className="pub-item-tag">Milestone assigned to you</div>
+          {myMs.map((m) => {
+            // A milestone with steps under it completes when those do, so
+            // there's nothing to press here — show the progress instead.
+            const kids = m.child_total ?? 0;
+            return (
+              <div key={m.id} className="pub-item mine">
+                <div className="pub-item-main">
+                  <div className="pub-item-name">{m.name}</div>
+                  <div className="pub-item-tag">
+                    {kids
+                      ? `Milestone assigned to you · ${m.child_done}/${kids} steps done`
+                      : "Milestone assigned to you"}
+                  </div>
+                </div>
+                {kids ? (
+                  <span className="pub-derived">Closes with its steps</span>
+                ) : (
+                  <button
+                    className="pub-btn"
+                    disabled={busy === m.id}
+                    onClick={() => act({ action: "close_milestone", id: m.id }, "Marked complete. Thanks.")}
+                  >
+                    {busy === m.id ? "…" : "Mark done"}
+                  </button>
+                )}
               </div>
-              <button
-                className="pub-btn"
-                disabled={busy === m.id}
-                onClick={() => act({ action: "close_milestone", id: m.id }, "Marked complete. Thanks.")}
-              >
-                {busy === m.id ? "…" : "Mark done"}
-              </button>
-            </div>
-          ))}
+            );
+          })}
 
           {myTasks.map((t) => (
             <div key={t.id} className="pub-item mine">

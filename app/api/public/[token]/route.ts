@@ -115,6 +115,16 @@ export async function POST(req: Request, { params }: { params: { token: string }
       return NextResponse.json({ error: "That milestone isn't assigned to you." }, { status: 403 });
     }
 
+    const { data: kids } = await db
+      .from("milestones").select("id, done").eq("parent_id", ms.id);
+    const pending = (kids ?? []).filter((k: any) => !k.done).length;
+    if (pending) {
+      return NextResponse.json({
+        error: `This one has ${pending} step${pending === 1 ? "" : "s"} under it still open. ` +
+               `Close those and it completes by itself.`,
+      }, { status: 400 });
+    }
+
     await db.from("milestones")
       .update({ done: true, completed_at: new Date().toISOString() })
       .eq("id", ms.id);

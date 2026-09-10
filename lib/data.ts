@@ -21,9 +21,31 @@ const SELECT = `
   )
 `;
 
-function pct(ms: { done: boolean }[]) {
+/**
+ * Project completion, weighted by sub-milestones.
+ *
+ * Each top-level milestone is worth the same share of the project. A
+ * milestone with children is worth the fraction of those children that are
+ * done, so finishing 20 of 33 accounts moves the number instead of the
+ * project sitting still until the parent is ticked. A milestone without
+ * children is worth 1 or 0 as before.
+ */
+export function weightOf(m: { done: boolean; children?: { done: boolean }[] }) {
+  const kids = m.children ?? [];
+  if (!kids.length) return m.done ? 1 : 0;
+  return kids.filter((c) => c.done).length / kids.length;
+}
+
+/** A parent with children is complete only when every child is. */
+export function isComplete(m: { done: boolean; children?: { done: boolean }[] }) {
+  const kids = m.children ?? [];
+  return kids.length ? kids.every((c) => c.done) : m.done;
+}
+
+function pct(ms: { done: boolean; children?: { done: boolean }[] }[]) {
   if (!ms.length) return 0;
-  return Math.round((ms.filter((m) => m.done).length / ms.length) * 100);
+  const total = ms.reduce((sum, m) => sum + weightOf(m), 0);
+  return Math.round((total / ms.length) * 100);
 }
 
 function shape(row: any): Project {
@@ -41,6 +63,13 @@ function shape(row: any): Project {
   for (const m of flat) {
     if (m.parent_id && byId.has(m.parent_id)) byId.get(m.parent_id).children.push(m);
     else milestones.push(m);
+  }
+
+  // A milestone with children doesn't hold its own completion — it's complete
+  // exactly when all its children are. Deriving it here means the panel, the
+  // card, the public page and the digest can't disagree about it.
+  for (const m of milestones) {
+    if (m.children.length) m.done = m.children.every((c: any) => c.done);
   }
 
 
@@ -200,6 +229,18 @@ export async function getProjectSummaries(today: string): Promise<ProjectSummary
   return (data ?? []).map((row: any) => {
     const all = (row.milestones ?? []).sort((a: any, b: any) => a.position - b.position);
     const top = all.filter((m: any) => !m.parent_id);
+
+    // Attach children so the weighting and the derived completion match
+    // what the full project query produces.
+    const kidsOf = new Map<string, any[]>();
+    for (const m of all) {
+      if (!m.parent_id) continue;
+      kidsOf.set(m.parent_id, [...(kidsOf.get(m.parent_id) ?? []), m]);
+    }
+    for (const m of top) {
+      m.children = kidsOf.get(m.id) ?? [];
+      if (m.children.length) m.done = m.children.every((c: any) => c.done);
+    }
 
     return {
       id: row.id,
