@@ -155,6 +155,31 @@ function Inner() {
               </div>
             </div>
 
+            <div className="fld fld-2">
+              <div>
+                <label htmlFor="dmstart">Only send between</label>
+                <select id="dmstart" value={s.dm_start_hour ?? 9}
+                  onChange={(e) => save({ dm_start_hour: Number(e.target.value) }, "Send window updated.")}>
+                  {Array.from({ length: 24 }, (_, h) => (
+                    <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="dmend">and</label>
+                <select id="dmend" value={s.dm_end_hour ?? 17}
+                  onChange={(e) => save({ dm_end_hour: Number(e.target.value) }, "Send window updated.")}>
+                  {Array.from({ length: 24 }, (_, h) => (
+                    <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: -6, marginBottom: 16 }}>
+              No reminder goes out before or after these hours, {zoneLabel()} time.
+              Resending from the Deadlines tab ignores this.
+            </div>
+
             <div className="tog-row">
               <div>
                 <div className="tog-k">Raise it in the group channel if nobody replies</div>
