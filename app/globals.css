@@ -939,3 +939,10 @@ button:disabled { opacity:.5; cursor:not-allowed; }
   font-size:13px; color:var(--ink-2); padding:7px 0;
   border-bottom:1px solid var(--g-line);
 }
+
+/* An import that would destroy rows gets a harder warning than a note. */
+.imp-warn.stop {
+  background:rgba(184,69,58,.10);
+  border-color:rgba(184,69,58,.35);
+  color:#8c2f26;
+}

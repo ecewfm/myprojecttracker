@@ -495,6 +495,7 @@ export default function ProjectPanel({
    * deleted or reordered. Simple edits use `patch` below and never hit the
    * network twice.
    */
+  /** Refetch this project only. Used when its shape changes. */
   const refresh = async () => {
     const fresh = await api<Project>(`/api/projects/${p!.id}`);
     setP(fresh);
@@ -537,8 +538,13 @@ export default function ProjectPanel({
   /* ── actions ── */
   async function setRoadblockStatus(id: string, status: RoadblockStatus, was: RoadblockStatus) {
     try {
-      await api(`/api/roadblocks/${id}`, { method: "PATCH", body: { status } });
-      await refresh();
+      patch(
+        (d) => {
+          d.roadblocks = d.roadblocks.map((r) => (r.id === id ? { ...r, status } : r));
+          return d;
+        },
+        () => api(`/api/roadblocks/${id}`, { method: "PATCH", body: { status } })
+      );
       if (status === "resolved" && was !== "resolved") toast("Resolved. Reminders for it stop here.");
       else if (status === "escalated") toast("Escalated. The owner and manager were messaged on Cliq.");
       else toast(`Status set to ${ROADBLOCK_STATUS[status].label.toLowerCase()}.`);
@@ -711,7 +717,7 @@ export default function ProjectPanel({
       await api(`/api/projects/${p!.id}`, { method: "DELETE" });
       toast("Project deleted.");
       onClose();
-      onChange();
+      onChange();   // no argument: reload the board
     } catch (e: any) { toast(e.message, "err"); }
   }
 
@@ -1277,12 +1283,7 @@ export default function ProjectPanel({
               <div
                 className={`tog ${p.reminders_on ? "on" : ""}`}
                 role="switch" aria-checked={p.reminders_on} tabIndex={0}
-                onClick={async () => {
-                  await api(`/api/projects/${p.id}`, {
-                    method: "PATCH", body: { reminders_on: !p.reminders_on },
-                  });
-                  await refresh();
-                }}
+                onClick={() => saveProjectField({ reminders_on: !p.reminders_on })}
               />
             </div>
           </div>

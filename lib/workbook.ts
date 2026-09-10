@@ -19,7 +19,7 @@ export const SHEETS = {
 
 /* ── column headers, in order ───────────────────────────── */
 const MILESTONE_COLS = [
-  "ID", "Action", "Milestone", "Parent ID", "Done", "Due date",
+  "ID", "Action", "Milestone", "Parent", "Done", "Due date",
   "Assigned emails", "Notes",
 ];
 const TASK_COLS = [
@@ -60,7 +60,9 @@ function guideSheet() {
     ["Check spelling — a typo creates a new person who won't receive messages."],
     [],
     ["Sub-milestones"],
-    ["Put the parent milestone's ID in the Parent ID column."],
+    ["Put the parent milestone's name in the Parent column."],
+    ["The parent can be one already on the board, or another row in this same file."],
+    ["Leave Parent blank for a normal, top-level milestone."],
     ["Leave it blank for a top-level milestone."],
     [],
     ["Dates"],
@@ -104,7 +106,9 @@ export function buildWorkbook(p: Project | null): Buffer {
     ]);
     for (const c of m.children ?? []) {
       msRows.push([
-        c.id, "", c.name, m.id, yesNo(c.done), c.due_date ?? "",
+        // The parent is written by name, not id — it's what people can
+        // actually type, and it works for parents that don't exist yet.
+        c.id, "", c.name, m.name, yesNo(c.done), c.due_date ?? "",
         emails(c.assignees ?? []), c.note ?? "",
       ]);
     }

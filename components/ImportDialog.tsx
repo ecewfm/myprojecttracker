@@ -82,6 +82,9 @@ export default function ImportDialog({
   }
 
   const counts = preview?.counts ?? {};
+  /** Duplicate IDs would destroy rows, so the import can't proceed. */
+  const blocked = !!preview?.warnings.some((w) => w.includes("share the ID"));
+
   const summaryLine = (action: string) =>
     Object.entries(counts)
       .filter(([k]) => k.startsWith(action + "_"))
@@ -130,7 +133,7 @@ export default function ImportDialog({
               </div>
 
               {preview.warnings.length > 0 && (
-                <div className="imp-warn">
+                <div className={`imp-warn ${blocked ? "stop" : ""}`}>
                   {preview.warnings.map((w, i) => <div key={i}>{w}</div>)}
                 </div>
               )}
@@ -200,7 +203,7 @@ export default function ImportDialog({
                 </button>
                 <button
                   className="btn btn-solid"
-                  disabled={busy || preview.changes.length === 0}
+                  disabled={busy || blocked || preview.changes.length === 0}
                   onClick={apply}
                 >
                   {busy ? "Importing…" : "Import"}

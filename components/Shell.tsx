@@ -81,6 +81,9 @@ export function TopBar({ onNew, onImport }: { onNew?: () => void; onImport?: () 
       </div>
       <div className="bar-right">
         <Notifications />
+        <a className="btn" href="/api/template" download title="Blank import template">
+          Template
+        </a>
         {onImport && (
           <button className="btn" onClick={onImport}>Import</button>
         )}

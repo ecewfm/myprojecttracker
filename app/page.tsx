@@ -16,13 +16,13 @@ function Card({
   onDuplicate: (p: ProjectSummary) => void;
   onDelete: (p: ProjectSummary) => void;
 }) {
-  const open = p.openRoadblocks;
   const today = zoneToday();
   const late = p.due_date && p.due_date < today && p.percent < 100;
+  const people = [p.owner, ...p.members].filter(Boolean) as { name: string }[];
 
   return (
     <button
-      className={`card ${open ? "blocked" : ""}`}
+      className={`card ${p.openRoadblocks ? "blocked" : ""}`}
       onClick={onOpen}
       draggable
       onDragStart={(e) => {
@@ -30,19 +30,14 @@ function Card({
         e.dataTransfer.effectAllowed = "move";
       }}
     >
-      {/* Hidden until hover so the board reads the same at rest. */}
       <span className="card-acts">
         <span
-          className="icon-act"
-          role="button" tabIndex={0} title="Duplicate this project"
+          className="icon-act" role="button" tabIndex={0} title="Duplicate this project"
           onClick={(e) => { e.stopPropagation(); onDuplicate(p); }}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); onDuplicate(p); } }}
         >⧉</span>
         <span
-          className="icon-act del"
-          role="button" tabIndex={0} title="Delete this project"
+          className="icon-act del" role="button" tabIndex={0} title="Delete this project"
           onClick={(e) => { e.stopPropagation(); onDelete(p); }}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); onDelete(p); } }}
         >🗑</span>
       </span>
 
@@ -51,7 +46,7 @@ function Card({
         <span className="card-ref">{p.ref}</span>
       </div>
       <div className="card-who">
-        {[p.owner, ...p.members].filter(Boolean).map((m) => m!.name).join(", ") || "Unassigned"}
+        {people.map((m) => m.name).join(", ") || "Unassigned"}
       </div>
 
       {(p.priority || p.shared || p.due_date || p.labels.length > 0) && (
@@ -72,10 +67,10 @@ function Card({
         </div>
       )}
 
-      {open > 0 && (
+      {p.openRoadblocks > 0 && (
         <div className="flag">
           <span className="pip" />
-          {open} roadblock{open > 1 ? "s" : ""}
+          {p.openRoadblocks} roadblock{p.openRoadblocks > 1 ? "s" : ""}
         </div>
       )}
 
@@ -85,41 +80,89 @@ function Card({
       </div>
 
       <div className="ticks">
-        {p.milestones.filter((m) => !m.sub).map((m) => (
+        {p.milestones.map((m) => (
           <span key={m.id} className={`tick ${m.done ? "on" : m.hasNote ? "note" : ""}`} />
         ))}
       </div>
-
     </button>
   );
 }
 
 function BoardInner() {
   const toast = useToast();
-  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [cards, setCards] = useState<ProjectSummary[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [selected, setSelected] = useState<Project | null>(null);
-  const [opening, setOpening] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
 
+  /** The board only ever loads summaries — a fraction of the full payload. */
   const load = useCallback(async () => {
     try {
       const [ps, ms] = await Promise.all([
-        api<ProjectSummary[]>("/api/projects"),
+        api<ProjectSummary[]>("/api/projects/summary"),
         api<Member[]>("/api/team"),
       ]);
-      setProjects(ps);
+      setCards(ps);
       setMembers(ms);
-
-    } catch (e: any) {
-      toast(e.message, "err");
-    }
+    } catch (e: any) { toast(e.message, "err"); }
     setLoading(false);
   }, [toast]);
 
   useEffect(() => { load(); }, [load]);
+
+  /** The full project is fetched once, when its panel opens. */
+  async function open(id: string) {
+    try {
+      setSelected(await api<Project>(`/api/projects/${id}`));
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  /**
+   * The panel is optimistic — it patches its own state and hands the updated
+   * project back here. We derive just the fields a card shows, so ticking a
+   * checkbox never refetches the board. Called with no argument (after a
+   * create or delete) it reloads properly.
+   */
+  const onPanelChange = useCallback((full?: Project) => {
+    if (!full) { load(); return; }
+
+    const top = full.milestones;
+    setCards((prev) => prev.map((c) => c.id === full.id ? {
+      ...c,
+      title: full.title,
+      status: full.status,
+      due_date: full.due_date,
+      priority: full.priority,
+      shared: full.shared,
+      labels: full.labels,
+      owner: full.owner ? { id: full.owner.id, name: full.owner.name } : null,
+      members: full.members.map((m) => ({ id: m.id, name: m.name })),
+      percent: top.length
+        ? Math.round((top.filter((m) => m.done).length / top.length) * 100)
+        : 0,
+      openRoadblocks: full.roadblocks.filter((r) => r.status !== "resolved").length,
+      milestones: top.map((m) => ({
+        id: m.id, done: m.done, due_date: m.due_date, hasNote: !!m.note, sub: false,
+      })),
+    } : c));
+  }, [load]);
+
+  async function moveProject(id: string, status: string) {
+    const proj = cards.find((x) => x.id === id);
+    if (!proj || proj.status === status) return;
+
+    setCards((prev) =>
+      prev.map((x) => (x.id === id ? { ...x, status: status as ProjectStatus } : x))
+    );
+    try {
+      await api(`/api/projects/${id}`, { method: "PATCH", body: { status } });
+    } catch (e: any) {
+      toast(e.message, "err");
+      load();
+    }
+  }
 
   async function newProject() {
     const title = prompt("Project name");
@@ -129,32 +172,6 @@ function BoardInner() {
       await load();
       toast("Project created with the standard ten milestones.");
     } catch (e: any) { toast(e.message, "err"); }
-  }
-
-  /** The card only holds a summary; load the full project when it opens. */
-  async function openProject(id: string) {
-    setOpening(id);
-    try {
-      setSelected(await api<Project>(`/api/projects/${id}`));
-    } catch (e: any) { toast(e.message, "err"); }
-    setOpening(null);
-  }
-
-  async function moveProject(id: string, status: string) {
-    const proj = projects.find((x) => x.id === id);
-    if (!proj || proj.status === status) return;
-
-    // Move it on screen first; the write follows. A failure reloads the truth.
-    setProjects((prev) =>
-      prev.map((x) => (x.id === id ? { ...x, status: status as ProjectStatus } : x))
-    );
-    try {
-      await api(`/api/projects/${id}`, { method: "PATCH", body: { status } });
-      await load();
-    } catch (e: any) {
-      toast(e.message, "err");
-      await load();
-    }
   }
 
   async function duplicate(p: ProjectSummary) {
@@ -170,12 +187,12 @@ function BoardInner() {
     if (!confirm("Last check — this can't be undone. Delete it?")) return;
     try {
       await api(`/api/projects/${p.id}`, { method: "DELETE" });
-      await load();
+      setCards((prev) => prev.filter((c) => c.id !== p.id));
       toast("Deleted.");
-    } catch (e: any) { toast(e.message, "err"); }
+    } catch (e: any) { toast(e.message, "err"); load(); }
   }
 
-  const blockers = projects.reduce((n, p) => n + p.openRoadblocks, 0);
+  const blockers = cards.reduce((n, p) => n + p.openRoadblocks, 0);
 
   return (
     <div id="shell">
@@ -184,7 +201,7 @@ function BoardInner() {
       <div className="strip">
         {STATUS_COLUMNS.map((c) => (
           <div key={c.key} className={`stat ${c.dim ? "muted" : ""}`}>
-            <div className="stat-n">{projects.filter((p) => p.status === c.key).length}</div>
+            <div className="stat-n">{cards.filter((p) => p.status === c.key).length}</div>
             <div className="stat-l">{c.label}</div>
           </div>
         ))}
@@ -196,7 +213,7 @@ function BoardInner() {
 
       <div className="board">
         {STATUS_COLUMNS.map((c) => {
-          const list = projects.filter((p) => p.status === c.key);
+          const list = cards.filter((p) => p.status === c.key);
           return (
             <div
               key={c.key}
@@ -222,7 +239,7 @@ function BoardInner() {
                         <Card
                           key={p.id}
                           p={p}
-                          onOpen={() => openProject(p.id)}
+                          onOpen={() => open(p.id)}
                           onDuplicate={duplicate}
                           onDelete={remove}
                         />
@@ -235,17 +252,17 @@ function BoardInner() {
       </div>
 
       {importing && (
-        <ImportDialog onClose={() => setImporting(false)} onDone={load} />
+        <ImportDialog
+          onClose={() => setImporting(false)}
+          onDone={() => { setImporting(false); load(); }}
+        />
       )}
 
       <ProjectPanel
         project={selected}
         members={members}
-        onClose={() => { setSelected(null); load(); }}
-        onChange={(fresh) => {
-          // The panel hands back the updated project, so nothing refetches.
-          if (fresh) setSelected(fresh);
-        }}
+        onClose={() => setSelected(null)}
+        onChange={onPanelChange}
       />
     </div>
   );

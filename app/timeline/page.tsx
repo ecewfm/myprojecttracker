@@ -64,6 +64,7 @@ function Inner() {
 
   useEffect(() => { load(); }, [load]);
 
+  /** The full project is only fetched when a row is opened. */
   async function openProject(id: string) {
     try { setSelected(await api<Project>(`/api/projects/${id}`)); }
     catch (e: any) { toast(e.message, "err"); }

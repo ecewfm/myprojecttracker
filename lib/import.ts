@@ -31,6 +31,51 @@ export interface Preview {
 
 const isDelete = (r: ParsedRow) => /^delete$/i.test(r["Action"] ?? "");
 
+/**
+ * The parent of a sub-milestone. Older exports used "Parent ID"; current ones
+ * write the parent's name under "Parent". Either is accepted, and the value
+ * may be a name or an id — whichever the person typed.
+ */
+const parentRef = (r: ParsedRow) =>
+  (r["Parent"] ?? r["Parent ID"] ?? "").trim();
+
+/**
+ * Copying a row in Excel brings its ID along, so several rows end up claiming
+ * to be the same record. Left alone, each one overwrites the last and only the
+ * final row survives — the rest of the work silently disappears. Catch it here
+ * and refuse the import instead.
+ */
+function duplicateIds(rows: ParsedRow[], nameKey: string) {
+  const seen = new Map<string, string[]>();
+  for (const r of rows) {
+    const id = (r["ID"] ?? "").trim();
+    if (!id) continue;                       // blank means "create", always fine
+    const list = seen.get(id) ?? [];
+    list.push(r[nameKey] || "(unnamed)");
+    seen.set(id, list);
+  }
+  return [...seen.entries()]
+    .filter(([, names]) => names.length > 1)
+    .map(([id, names]) => ({ id, names }));
+}
+
+function reportDuplicates(
+  warnings: string[],
+  rows: ParsedRow[],
+  nameKey: string,
+  sheet: string
+) {
+  for (const { id, names } of duplicateIds(rows, nameKey)) {
+    const shown = names.slice(0, 4).join(", ");
+    const more = names.length > 4 ? ` and ${names.length - 4} more` : "";
+    warnings.push(
+      `${sheet}: ${names.length} rows share the ID ${id.slice(0, 8)}… (${shown}${more}). ` +
+      `That usually means a row was copied and the ID came with it. ` +
+      `Clear the ID on the rows that should be new, then import again.`
+    );
+  }
+}
+
 async function teamByEmail() {
   const { data } = await db.from("team_members").select("id, name, email");
   const map = new Map<string, { id: string; name: string; email: string }>();
@@ -65,6 +110,11 @@ export async function previewImport(buf: ArrayBuffer): Promise<Preview> {
   if (!title && !projectId) {
     warnings.push("The Project sheet has no Title and no Project ID — nothing to import into.");
   }
+
+  // Duplicate IDs are a hard stop — importing would destroy rows.
+  reportDuplicates(warnings, parsed.milestones, "Milestone", "Milestones");
+  reportDuplicates(warnings, parsed.tasks, "Action item", "Action items");
+  reportDuplicates(warnings, parsed.roadblocks, "Roadblock", "Roadblocks");
 
   const existing = projectId ? await getProject(projectId) : null;
   if (projectId && !existing) {
@@ -123,7 +173,7 @@ export async function previewImport(buf: ArrayBuffer): Promise<Preview> {
       kind: "milestone",
       action: id ? "update" : "create",
       label: name,
-      detail: r["Parent ID"] ? "sub-milestone" : undefined,
+      detail: parentRef(r) ? "sub-milestone" : undefined,
     });
   }
 
@@ -210,6 +260,22 @@ export async function applyImport(
 ): Promise<ApplyResult> {
   const parsed = parseWorkbook(buf);
   const team = await teamByEmail();
+
+  // Never write a file that would collapse several rows into one. The preview
+  // warns about this, but the apply endpoint is what actually protects the data.
+  const dupes = [
+    ...duplicateIds(parsed.milestones, "Milestone").map((d) => ({ ...d, sheet: "Milestones" })),
+    ...duplicateIds(parsed.tasks, "Action item").map((d) => ({ ...d, sheet: "Action items" })),
+    ...duplicateIds(parsed.roadblocks, "Roadblock").map((d) => ({ ...d, sheet: "Roadblocks" })),
+  ];
+  if (dupes.length) {
+    const first = dupes[0];
+    throw new Error(
+      `Import stopped — nothing was changed. ${first.sheet} has ${first.names.length} rows ` +
+      `sharing one ID, so they'd overwrite each other and only the last would survive. ` +
+      `Clear the ID column on the rows that should be new, then import again.`
+    );
+  }
 
   const result: ApplyResult = {
     projectId: "", created: 0, updated: 0, deleted: 0,
@@ -301,9 +367,20 @@ export async function applyImport(
 
   // ── milestones: parents first so children can reference them ──
   const idMap = new Map<string, string>();     // sheet ID → real ID
+  const nameToId = new Map<string, string>();  // milestone name → real ID
+
+  // Milestones already on the project can be parents too, so seed the map
+  // before processing any rows.
+  {
+    const { data: current } = await db.from("milestones")
+      .select("id, name").eq("project_id", projectId).is("parent_id", null);
+    for (const m of current ?? []) {
+      nameToId.set(String(m.name).trim().toLowerCase(), m.id);
+    }
+  }
   const rows = parsed.milestones.filter((r) => r["Milestone"] || r["ID"]);
-  const parents = rows.filter((r) => !r["Parent ID"]);
-  const children = rows.filter((r) => r["Parent ID"]);
+  const parents = rows.filter((r) => !parentRef(r));
+  const children = rows.filter((r) => parentRef(r));
   let position = 0;
 
   for (const pass of [parents, children]) {
@@ -320,10 +397,23 @@ export async function applyImport(
       }
       if (!name) continue;
 
-      const parentSheetId = r["Parent ID"];
-      const parentId = parentSheetId
-        ? idMap.get(parentSheetId) ?? parentSheetId
-        : null;
+      // Resolve the parent by whatever the row points at: an id we just
+      // created, an id that already exists, or — most often — a name.
+      const ref = parentRef(r);
+      let parentId: string | null = null;
+
+      if (ref) {
+        parentId =
+          idMap.get(ref) ??                    // parent created in this import
+          nameToId.get(ref.toLowerCase()) ??   // parent matched by name
+          (ref.includes("-") ? ref : null);    // a raw id typed in
+
+        if (!parentId) {
+          result.problems.push(
+            `Sub-milestone "${name}": no parent milestone called "${ref}" — created at the top level instead.`
+          );
+        }
+      }
 
       const fields: Record<string, unknown> = {
         name,
@@ -351,6 +441,8 @@ export async function applyImport(
       }
 
       if (sheetId) idMap.set(sheetId, realId!);
+      // A child later in the file may name this row as its parent.
+      if (!parentId) nameToId.set(name.trim().toLowerCase(), realId!);
 
       // assignees
       const ids = await idsFor(r["Assigned emails"]);
