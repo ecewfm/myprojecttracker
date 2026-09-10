@@ -391,11 +391,18 @@ export async function applyImport(
   const keyOf = (name: string, parentId: string | null) =>
     `${parentId ?? "root"}|${name.trim().toLowerCase()}`;
 
+  // position is NOT NULL with no default. Supabase upsert runs the INSERT
+  // half first, so omitting it fails the whole batch on a not-null violation
+  // before ON CONFLICT can turn it into an update — which silently lost every
+  // milestone change, dates and notes alike. Carry the existing value through.
+  const existingPos = new Map<string, number>();
+
   {
     const { data: current } = await db.from("milestones")
-      .select("id, name, parent_id").eq("project_id", projectId);
+      .select("id, name, parent_id, position").eq("project_id", projectId);
     for (const m of current ?? []) {
       existingKey.set(keyOf(String(m.name), m.parent_id), m.id);
+      existingPos.set(m.id, m.position ?? 1);
       if (!m.parent_id) nameToId.set(String(m.name).trim().toLowerCase(), m.id);
     }
   }
@@ -456,7 +463,11 @@ export async function applyImport(
       const existingId = r["ID"] || existingKey.get(keyOf(name, parentId));
 
       if (existingId) {
-        toUpdate.push({ id: existingId, ...fields });
+        toUpdate.push({
+          id: existingId,
+          position: existingPos.get(existingId) ?? ++position,
+          ...fields,
+        });
       } else {
         position++;
         toInsert.push({ ...fields, position });
