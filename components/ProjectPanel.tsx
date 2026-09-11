@@ -717,6 +717,7 @@ export default function ProjectPanel({
   const [meeting, setMeeting] = useState({ start: "", minutes: 30 });
   const [taskDraft, setTaskDraft] = useState<{ name: string; assignee_ids: string[]; due_date: string }>({ name: "", assignee_ids: [], due_date: "" });
   const [showTaskForm, setShowTaskForm] = useState(false);
+  const [taskFiles, setTaskFiles] = useState<File[]>([]);
   const [links, setLinks] = useState<any[]>([]);
   const att = useAttachments(project?.id, toast);
 
@@ -1086,7 +1087,7 @@ export default function ProjectPanel({
   async function addTask() {
     if (!taskDraft.name.trim()) { toast("Name the action item.", "err"); return; }
     try {
-      await api("/api/tasks", {
+      const created = await api<{ id: string }>("/api/tasks", {
         method: "POST",
         body: {
           project_id: p!.id,
@@ -1095,7 +1096,14 @@ export default function ProjectPanel({
           due_date: taskDraft.due_date || null,
         },
       });
+      // Attach anything they picked, now that the item exists.
+      if (taskFiles.length && created?.id) {
+        try { await att.upload("task", created.id, taskFiles); }
+        catch (e: any) { toast(`Item added, but the images didn't: ${e.message}`, "err"); }
+      }
+
       setTaskDraft({ name: "", assignee_ids: [], due_date: "" });
+      setTaskFiles([]);
       setShowTaskForm(false);
       await refresh();
       toast(taskDraft.assignee_ids.length ? "Added. Everyone assigned was messaged on Cliq." : "Action item added.");
@@ -1413,6 +1421,25 @@ export default function ProjectPanel({
                   <input type="date" value={taskDraft.due_date}
                     onChange={(e) => setTaskDraft({ ...taskDraft, due_date: e.target.value })} />
                 </div>
+
+                {/* Images can be chosen now; they upload once the item has an
+                    id to hang off. */}
+                <label style={{ fontSize: 11, color: "var(--ink-3)", display: "block", marginBottom: 6 }}>
+                  Images (optional)
+                </label>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/jpeg,image/png,image/gif,image/webp"
+                  onChange={(e) => setTaskFiles(Array.from(e.target.files ?? []))}
+                  style={{ fontSize: 12, marginBottom: 10 }}
+                />
+                {taskFiles.length > 0 && (
+                  <div style={{ fontSize: 11, color: "var(--ink-3)", marginBottom: 10 }}>
+                    {taskFiles.length} image{taskFiles.length === 1 ? "" : "s"} will be attached.
+                  </div>
+                )}
+
                 <button className="btn btn-solid" onClick={addTask}>Add action item</button>
               </div>
             )}
