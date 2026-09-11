@@ -2,6 +2,7 @@ import { db, log } from "./supabase";
 import { cliqDM, cliqChannel } from "./zoho";
 import { ensureShareUrl } from "./ensure-link";
 import { DigestBatch } from "./digest-batch";
+import { claimUnannounced } from "./attachments";
 import { daysUntilInZone, isWeekdayInZone, zoneHour } from "./tz";
 
 // Day maths runs in the app's timezone (see lib/tz.ts), so "due today"
@@ -179,6 +180,7 @@ export async function runReminders() {
         kind: "task",
         name: t.name,
         due: t.due_date,
+        images: await claimUnannounced({ kind: "task", id: t.id }),
       });
       await db.from("task_assignees")
         .update({ last_nudge_at: new Date().toISOString(), nudge_count: row.nudge_count + 1 })
@@ -225,6 +227,7 @@ export async function runReminders() {
         kind: "milestone",
         name: m.name,
         due: m.due_date,
+        images: await claimUnannounced({ kind: "milestone", id: m.id }),
       });
       await db.from("milestone_assignees")
         .update({ last_nudge_at: new Date().toISOString(), nudge_count: row.nudge_count + 1 })
@@ -343,10 +346,16 @@ export async function notifyAssignment(taskId: string, memberId: string) {
   // Make sure they have a way to close it before telling them about it.
   const url = await ensureShareUrl(task.projects.id, memberId);
 
+  const shots = await claimUnannounced({ kind: "task", id: taskId });
+  const shotLines = shots.filter((f) => f.url).length
+    ? `\n\n${shots.length} image${shots.length === 1 ? "" : "s"} attached:` +
+      shots.filter((f) => f.url).map((f) => `\n${f.url}`).join("")
+    : "";
+
   await cliqDM(
     who.email,
     `*${task.projects.title}* — you've been assigned: "${task.name}"` +
-      (task.due_date ? `\nDue ${task.due_date}.` : "") +
+      (task.due_date ? `\nDue ${task.due_date}.` : "") + shotLines +
       (url
         ? `\n\nMark it done here when you're finished:\n${url}`
         : `\nI'll follow up here until it's closed.`)
@@ -366,10 +375,16 @@ export async function notifyMilestoneAssignment(milestoneId: string, memberId: s
 
   const url = await ensureShareUrl(ms.projects.id, memberId);
 
+  const msShots = await claimUnannounced({ kind: "milestone", id: milestoneId });
+  const msShotLines = msShots.filter((f) => f.url).length
+    ? `\n\n${msShots.length} image${msShots.length === 1 ? "" : "s"} attached:` +
+      msShots.filter((f) => f.url).map((f) => `\n${f.url}`).join("")
+    : "";
+
   await cliqDM(
     who.email,
     `*${ms.projects.title}* — milestone assigned to you: "${ms.name}"` +
-      (ms.due_date ? `\nDue ${ms.due_date}.` : "") +
+      (ms.due_date ? `\nDue ${ms.due_date}.` : "") + msShotLines +
       (url ? `\n\nMark it complete here when it's done:\n${url}` : "")
   );
   await log("cliq_dm", `Milestone assigned to ${who.name} — ${ms.name}`, ms.projects.id);
@@ -389,11 +404,17 @@ export async function notifyRoadblockOwner(roadblockId: string, memberId: string
 
   const url = await ensureShareUrl(rb.projects.id, memberId);
 
+  const rbShots = await claimUnannounced({ kind: "roadblock", id: roadblockId });
+  const rbShotLines = rbShots.filter((f) => f.url).length
+    ? `\n\n${rbShots.length} image${rbShots.length === 1 ? "" : "s"} attached:` +
+      rbShots.filter((f) => f.url).map((f) => `\n${f.url}`).join("")
+    : "";
+
   await cliqDM(
     who.email,
     `*${rb.projects.title}* — roadblock assigned to you: "${rb.title}"` +
       (rb.detail ? `\n${rb.detail}` : "") +
-      (rb.target_date ? `\nTarget ${rb.target_date}.` : "") +
+      (rb.target_date ? `\nTarget ${rb.target_date}.` : "") + rbShotLines +
       (url ? `\n\nUpdate it here:\n${url}` : "")
   );
   await log("cliq_dm", `Roadblock assigned to ${who.name} — ${rb.title}`, rb.projects.id);

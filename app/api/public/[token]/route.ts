@@ -3,6 +3,7 @@ import { db } from "@/lib/supabase";
 import { getProject } from "@/lib/data";
 import { resolveToken, recordSubmission } from "@/lib/share";
 import { STATUS_COLUMNS } from "@/lib/types";
+import { listForProject } from "@/lib/attachments";
 
 /**
  * Public project view. Authenticated by the share token in the URL —
@@ -15,6 +16,8 @@ export async function GET(_: Request, { params }: { params: { token: string } })
 
   const p = await getProject(ctx.projectId);
   if (!p) return NextResponse.json({ error: "link_inactive" }, { status: 404 });
+
+  const files = await listForProject(ctx.projectId);
 
   const me = ctx.member.id;
 
@@ -39,6 +42,7 @@ export async function GET(_: Request, { params }: { params: { token: string } })
           // so the page can show "2/4" on a parent without extra work
           child_total: m.children?.length ?? 0,
           child_done: m.children?.filter((c) => c.done).length ?? 0,
+          images: files.milestone.get(m.id) ?? [],
         },
         // Sub-milestones follow their parent, flattened with a depth flag.
         // The page indents them; keeping the list flat means the existing
@@ -55,12 +59,14 @@ export async function GET(_: Request, { params }: { params: { token: string } })
           parent_name: m.name,
           child_total: 0,
           child_done: 0,
+          images: files.milestone.get(c.id) ?? [],
         })),
       ]),
       tasks: p.tasks.map((t) => ({
         id: t.id, name: t.name, done: t.done, due_date: t.due_date, note: t.note,
         assignee: t.assignees?.map((a) => a.name).join(", ") || null,
         mine: (t.assignees ?? []).some((a) => a.id === me),
+        images: files.task.get(t.id) ?? [],
       })),
       roadblocks: p.roadblocks.map((r) => ({
         id: r.id, title: r.title, detail: r.detail, status: r.status,

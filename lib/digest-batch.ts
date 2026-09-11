@@ -21,6 +21,8 @@ interface Item {
   kind: Kind;
   name: string;
   due?: string | null;
+  /** Images added since the last message about this item. */
+  images?: { filename: string; url: string | null }[];
 }
 
 export class DigestBatch {
@@ -97,11 +99,13 @@ function buildMessage(
     return (
       `*${projectTitle}* — ${label} ${headline}: "${i.name}"` +
       (i.due ? `\nDue ${i.due}.` : "") +
+      imageLines(i) +
       (url ? `\n\n${i.kind === "milestone" ? "Mark it complete" : "Close it"} here:\n${url}` : "")
     );
   }
 
-  const line = (i: Item) => `• ${i.name}${i.due ? ` — due ${i.due}` : ""}`;
+  const line = (i: Item) =>
+    `• ${i.name}${i.due ? ` — due ${i.due}` : ""}` + imageLines(i, "   ");
 
   const parts = [`*${projectTitle}* — ${items.length} items ${headline}`];
 
@@ -118,4 +122,20 @@ function buildMessage(
   if (url) parts.push(`\nUpdate them here:\n${url}`);
 
   return parts.join("\n");
+}
+
+/**
+ * Images added since the last message about this item.
+ *
+ * Cliq's file-upload endpoint needs a scope the app's token doesn't carry,
+ * so these go as links. Cliq renders a preview for most image URLs, which
+ * gets the picture in front of the reader without a token change.
+ */
+function imageLines(i: Item, indent = ""): string {
+  const imgs = (i.images ?? []).filter((f) => f.url);
+  if (!imgs.length) return "";
+
+  const head = `\n${indent}${imgs.length} new image${imgs.length === 1 ? "" : "s"}:`;
+  const body = imgs.map((f) => `\n${indent}${f.url}`).join("");
+  return head + body;
 }

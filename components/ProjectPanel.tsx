@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { api, useToast } from "./Shell";
+import Attachments, { type AttachedImage } from "./Attachments";
 import { formatDateInZone, zoneLabel, zoneToday } from "@/lib/tz";
 import {
   ROADBLOCK_STATUS, STATUS_COLUMNS,
@@ -146,6 +147,7 @@ export function AssigneePicker({
 function MilestoneRow({
   m, total, index, members, depth = 0,
   onToggle, onNote, onRename, onAssign, onDelete, onMove, onAddChild, onDueDate, onDrop,
+  images, onUpload, onRemoveImage, childImages, onChildUpload,
 }: {
   m: Milestone;
   total: number; index: number;
@@ -160,6 +162,11 @@ function MilestoneRow({
   onDrop?: (dragId: string, dropId: string) => void;
   onAddChild: (parentId: string) => void;
   onDueDate: (id: string, date: string | null) => void;
+  images?: AttachedImage[];
+  onUpload?: (files: File[]) => Promise<void>;
+  onRemoveImage?: (id: string) => Promise<void>;
+  childImages?: (id: string) => AttachedImage[];
+  onChildUpload?: (id: string, files: File[]) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState(m.note);
@@ -308,6 +315,18 @@ function MilestoneRow({
               placeholder="Decisions, context, what tripped this up…"
               onChange={(e) => edit(e.target.value)}
             />
+            {onUpload && (
+              <>
+                <label>Images</label>
+                <Attachments
+                  images={images ?? []}
+                  onUpload={onUpload}
+                  onDelete={onRemoveImage}
+                  compact
+                />
+              </>
+            )}
+
             <div className="ms-body-foot">
               <span>
                 {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : note ? "Saved" : "Empty"}
@@ -338,6 +357,9 @@ function MilestoneRow({
           onAddChild={onAddChild}
           onDueDate={onDueDate}
           onDrop={onDrop}
+          images={childImages?.(c.id)}
+          onUpload={onUpload ? (files) => onChildUpload!(c.id, files) : undefined}
+          onRemoveImage={onRemoveImage}
         />
       ))}
     </>
@@ -347,6 +369,7 @@ function MilestoneRow({
 /* ─────────── action item, expandable ─────────── */
 function TaskRow({
   t, members, today, onToggle, onUpdate, onDelete, onDrop,
+  images, onUpload, onRemoveImage,
 }: {
   t: Task;
   members: Member[];
@@ -355,6 +378,9 @@ function TaskRow({
   onUpdate: (id: string, patch: Record<string, unknown>) => void;
   onDelete: (id: string, name: string) => void;
   onDrop?: (dragId: string, dropId: string) => void;
+  images?: AttachedImage[];
+  onUpload?: (files: File[]) => Promise<void>;
+  onRemoveImage?: (id: string) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(t.name);
@@ -465,6 +491,18 @@ function TaskRow({
             placeholder="Context, blockers, what's been tried…"
             onChange={(e) => editNote(e.target.value)}
           />
+          {onUpload && (
+            <>
+              <label>Images</label>
+              <Attachments
+                images={images ?? []}
+                onUpload={onUpload}
+                onDelete={onRemoveImage}
+                compact
+              />
+            </>
+          )}
+
           <div className="ms-body-foot">
             <span>
               {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : note ? "Saved" : "Empty"}
@@ -481,13 +519,16 @@ function TaskRow({
 
 /* ─────────── roadblock card ─────────── */
 export function RoadblockCard({
-  r, members, busyStatus, onSave, onDelete,
+  r, members, busyStatus, onSave, onDelete, images, onUpload, onRemoveImage,
 }: {
   r: Roadblock;
   members: Member[];
   busyStatus: (s: RoadblockStatus) => void;
   onSave: (patch: Record<string, unknown>) => void;
   onDelete: () => void;
+  images?: AttachedImage[];
+  onUpload?: (files: File[]) => Promise<void>;
+  onRemoveImage?: (id: string) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState(r.title);
@@ -587,6 +628,18 @@ export function RoadblockCard({
             onChange={(e) => editNote(e.target.value)}
           />
 
+          {onUpload && (
+            <>
+              <label>Images</label>
+              <Attachments
+                images={images ?? []}
+                onUpload={onUpload}
+                onDelete={onRemoveImage}
+                compact
+              />
+            </>
+          )}
+
           <div className="ms-body-foot">
             <span>
               {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : note ? "Saved" : "Empty"}
@@ -600,6 +653,51 @@ export function RoadblockCard({
       )}
     </div>
   );
+}
+
+/**
+ * A project's images, grouped by what they hang off. Loaded once with the
+ * panel rather than per item, so opening a milestone doesn't fetch.
+ */
+function useAttachments(projectId: string | undefined, toast: ReturnType<typeof useToast>) {
+  const [byItem, setByItem] = useState<{
+    milestone: Record<string, AttachedImage[]>;
+    task: Record<string, AttachedImage[]>;
+    roadblock: Record<string, AttachedImage[]>;
+  }>({ milestone: {}, task: {}, roadblock: {} });
+
+  const load = useCallback(async () => {
+    if (!projectId) return;
+    try { setByItem(await api(`/api/attachments?project=${projectId}`)); }
+    catch { /* the panel still works without images */ }
+  }, [projectId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const upload = async (kind: string, id: string, files: File[]) => {
+    const fd = new FormData();
+    fd.append("kind", kind);
+    fd.append("id", id);
+    fd.append("project", projectId!);
+    files.forEach((f) => fd.append("files", f));
+
+    const res = await fetch("/api/attachments", { method: "POST", body: fd });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error ?? "Upload failed.");
+    if (json.problems?.length) toast(json.problems[0], "err");
+    else if (json.added) toast(`${json.added} image${json.added === 1 ? "" : "s"} added.`);
+    await load();
+  };
+
+  const remove = async (id: string) => {
+    await api("/api/attachments", { method: "DELETE", body: { id } });
+    await load();
+  };
+
+  const forItem = (kind: "milestone" | "task" | "roadblock", id: string) =>
+    byItem[kind]?.[id] ?? [];
+
+  return { forItem, upload, remove, reload: load };
 }
 
 /* ─────────── panel ─────────── */
@@ -620,6 +718,7 @@ export default function ProjectPanel({
   const [taskDraft, setTaskDraft] = useState<{ name: string; assignee_ids: string[]; due_date: string }>({ name: "", assignee_ids: [], due_date: "" });
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [links, setLinks] = useState<any[]>([]);
+  const att = useAttachments(project?.id, toast);
 
   useEffect(() => setP(project), [project]);
   useEffect(() => {
@@ -1156,6 +1255,9 @@ export default function ProjectPanel({
                 busyStatus={(s) => setRoadblockStatus(r.id, s, r.status)}
                 onSave={(patch) => updateRoadblock(r.id, patch)}
                 onDelete={() => deleteRoadblock(r.id, r.title)}
+                images={att.forItem("roadblock", r.id)}
+                onUpload={(files) => att.upload("roadblock", r.id, files)}
+                onRemoveImage={att.remove}
               />
             ))}
 
@@ -1243,6 +1345,11 @@ export default function ProjectPanel({
                 onAddChild={addSubMilestone}
                 onDueDate={setMilestoneDue}
                 onDrop={reorderMilestone}
+                images={att.forItem("milestone", m.id)}
+                onUpload={(files) => att.upload("milestone", m.id, files)}
+                onRemoveImage={att.remove}
+                childImages={(id) => att.forItem("milestone", id)}
+                onChildUpload={(id, files) => att.upload("milestone", id, files)}
               />
             ))}
           </div>
@@ -1271,6 +1378,9 @@ export default function ProjectPanel({
                 onUpdate={updateTask}
                 onDelete={deleteTask}
                 onDrop={reorderTask}
+                images={att.forItem("task", t.id)}
+                onUpload={(files) => att.upload("task", t.id, files)}
+                onRemoveImage={att.remove}
               />
             ))}
 

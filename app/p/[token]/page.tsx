@@ -3,17 +3,20 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { zoneToday } from "@/lib/tz";
+import Attachments, { type AttachedImage } from "@/components/Attachments";
 
 interface Item {
   id: string; name: string; done: boolean; due_date?: string | null;
   assignee: string | null; mine: boolean; note?: string;
   depth?: number; child_total?: number; child_done?: number;
+  images?: AttachedImage[];
   parent_id?: string | null; parent_name?: string | null;
 }
 interface Block {
   id: string; title: string; detail: string; status: string;
   owner: string | null; raised_at: string;
   note?: string; mine?: boolean; target_date?: string | null;
+  images?: AttachedImage[];
 }
 interface Data {
   viewer: { id: string; name: string; email: string };
@@ -93,6 +96,21 @@ export default function PublicProject() {
   const [noteText, setNoteText] = useState("");
 
   const say = (m: string) => { setToast(m); setTimeout(() => setToast(""), 2800); };
+
+  /** Attach images to an item on this project. */
+  async function sendFiles(kind: string, id: string, list: File[]) {
+    const fd = new FormData();
+    fd.append("kind", kind);
+    fd.append("id", id);
+    list.forEach((f) => fd.append("files", f));
+
+    const res = await fetch(`/api/public/${token}/upload`, { method: "POST", body: fd });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error ?? "That didn't upload.");
+    if (json.problems?.length) say(json.problems[0]);
+    else say(`${json.added} image${json.added === 1 ? "" : "s"} added.`);
+    await load();
+  }
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/public/${token}`);
@@ -245,6 +263,12 @@ export default function PublicProject() {
                     <div className="pub-item-name">{m.name}</div>
                     <div className="pub-item-tag">Step assigned to you</div>
                     <Note text={m.note ?? ""} />
+                    <Attachments
+                      images={m.images ?? []}
+                      onUpload={(files) => sendFiles("milestone", m.id, files)}
+                      canDelete={false}
+                      compact
+                    />
                     {noteFor === m.id && (
                       <InlineNote
                         value={noteText}
@@ -277,6 +301,12 @@ export default function PublicProject() {
               <div className="pub-item-main">
                 <div className="pub-item-name">{t.name}</div>
                 <Note text={t.note ?? ""} />
+                <Attachments
+                  images={t.images ?? []}
+                  onUpload={(files) => sendFiles("task", t.id, files)}
+                  canDelete={false}
+                  compact
+                />
                 <div className="pub-item-tag">
                   Action item
                   {t.due_date ? <span style={{ color: t.due_date < today ? "#b8453a" : undefined }}> · due {t.due_date}</span> : null}
@@ -475,6 +505,12 @@ export default function PublicProject() {
 
                 {r.detail && <div className="pub-rb-detail">{r.detail}</div>}
                 <Note text={r.note ?? ""} />
+                <Attachments
+                  images={r.images ?? []}
+                  onUpload={(files) => sendFiles("roadblock", r.id, files)}
+                  canDelete={false}
+                  compact
+                />
 
                 <div className="pub-rb-foot">
                   <span className="pub-row-sub">
