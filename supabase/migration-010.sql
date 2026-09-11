@@ -48,8 +48,12 @@ alter table attachments enable row level security;
 --
 --   Name:            attachments
 --   Public bucket:   OFF
---   File size limit: 10 MB
+--   File size limit: 50 MB
 --   Allowed MIME:    image/jpeg, image/png, image/gif, image/webp
+--
+-- 50 MB is the ceiling, not the expectation. Images are downscaled in the
+-- browser before upload — a 6 MB phone screenshot arrives as a few hundred
+-- KB — so the limit only exists to stop something pathological.
 --
 -- Keep it private. The app serves files through signed URLs that expire,
 -- so an image can't be reached by guessing a path, and the app decides who

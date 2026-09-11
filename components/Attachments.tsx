@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { shrink, reject, readable, MAX_INPUT } from "@/lib/shrink-image";
 
 export interface AttachedImage {
   id: string;
@@ -11,11 +12,8 @@ export interface AttachedImage {
 }
 
 const MAX_FILES = 10;
-const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-
-const kb = (n: number) =>
-  n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`;
+const kb = readable;
 
 /**
  * Images on a milestone, action item or roadblock.
@@ -36,6 +34,8 @@ export default function Attachments({
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [stage, setStage] = useState("");
+  const [notice, setNotice] = useState("");
   const [viewing, setViewing] = useState<AttachedImage | null>(null);
   const [dragging, setDragging] = useState(false);
 
@@ -52,18 +52,12 @@ export default function Attachments({
 
     const rejected: string[] = [];
     const ok = files.filter((f) => {
-      if (!ALLOWED.includes(f.type)) {
-        rejected.push(`${f.name} isn't a JPG, PNG, GIF or WebP`);
-        return false;
-      }
-      if (f.size > MAX_BYTES) {
-        rejected.push(`${f.name} is ${kb(f.size)} — the limit is 10 MB`);
-        return false;
-      }
+      const why = reject(f);
+      if (why) { rejected.push(why); return false; }
       return true;
     });
 
-    if (rejected.length) setError(rejected.join(". "));
+    if (rejected.length) setError(rejected.join(" "));
     if (!ok.length) return;
 
     // Say plainly when we can't take them all, rather than dropping some quietly.
@@ -76,9 +70,32 @@ export default function Attachments({
     }
 
     setBusy(true);
-    try { await onUpload(taking); }
-    catch (e: any) { setError(e.message ?? "That didn't upload."); }
+    setStage("Preparing…");
+    try {
+      // Large photos are downscaled in the browser, so a 6 MB phone
+      // screenshot uploads as a few hundred KB and the transfer finishes
+      // on a poor connection.
+      const prepared = [];
+      let savedFrom = 0, savedTo = 0;
+
+      for (const f of taking) {
+        const out = await shrink(f);
+        prepared.push(out.file);
+        if (out.wasResized) { savedFrom += out.originalBytes; savedTo += out.file.size; }
+      }
+
+      setStage(`Uploading ${prepared.length} image${prepared.length === 1 ? "" : "s"}…`);
+      await onUpload(prepared);
+
+      if (savedFrom > savedTo) {
+        setNotice(`Resized to save space — ${kb(savedFrom)} became ${kb(savedTo)}.`);
+        setTimeout(() => setNotice(""), 5000);
+      }
+    } catch (e: any) {
+      setError(e.message ?? "That didn't upload.");
+    }
     setBusy(false);
+    setStage("");
     if (input.current) input.current.value = "";
   }
 
@@ -136,13 +153,14 @@ export default function Attachments({
           onChange={(e) => take(e.target.files)}
         />
         {busy
-          ? "Uploading…"
+          ? stage || "Uploading…"
           : images.length
             ? `Add more — ${images.length} of ${MAX_FILES}`
             : "Add images — drop them here or click"}
       </div>
 
       {error && <div className="att-error">{error}</div>}
+      {notice && <div className="att-notice">{notice}</div>}
 
       {viewing?.url && (
         <div className="att-viewer" onClick={() => setViewing(null)}>

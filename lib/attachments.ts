@@ -12,7 +12,10 @@ import { db } from "./supabase";
 export const BUCKET = "attachments";
 
 export const MAX_FILES = 10;
-export const MAX_BYTES = 10 * 1024 * 1024;          // 10 MB
+// Images are downscaled in the browser before they get here, so anything
+// arriving should be well under a megabyte. This is a backstop against a
+// direct API call, not the everyday path.
+export const MAX_BYTES = 50 * 1024 * 1024;         // 50 MB
 export const ALLOWED = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 /** A year. Past this, a link in an old message stops rendering. */
@@ -51,7 +54,7 @@ export function validate(file: { type: string; size: number; name: string }) {
   }
   if (file.size > MAX_BYTES) {
     const mb = (file.size / 1024 / 1024).toFixed(1);
-    return `${file.name} is ${mb} MB. The limit is 10 MB.`;
+    return `${file.name} is ${mb} MB, past the 50 MB ceiling.`;
   }
   return null;
 }
