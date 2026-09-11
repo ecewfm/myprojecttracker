@@ -34,6 +34,8 @@ export async function GET(_: Request, { params }: { params: { token: string } })
           assignee: m.assignees?.map((a) => a.name).join(", ") || null,
           mine: (m.assignees ?? []).some((a) => a.id === me),
           depth: 0,
+          parent_id: null,
+          parent_name: null,
           // so the page can show "2/4" on a parent without extra work
           child_total: m.children?.length ?? 0,
           child_done: m.children?.filter((c) => c.done).length ?? 0,
@@ -47,6 +49,10 @@ export async function GET(_: Request, { params }: { params: { token: string } })
           assignee: c.assignees?.map((a) => a.name).join(", ") || null,
           mine: (c.assignees ?? []).some((a) => a.id === me),
           depth: 1,
+          // Carried so the page can show a step under the right parent,
+          // even when only the step is assigned to the reader.
+          parent_id: m.id,
+          parent_name: m.name,
           child_total: 0,
           child_done: 0,
         })),

@@ -964,3 +964,35 @@ button:disabled { opacity:.5; cursor:not-allowed; }
   font-size:11.5px; color:var(--ink-3); font-style:italic;
   white-space:nowrap; flex-shrink:0;
 }
+
+/* ── public page: parent / step grouping and notes ── */
+.pub-group {
+  border:1px solid var(--g-brd-2); border-radius:12px;
+  margin-bottom:10px; overflow:hidden;
+  background:rgba(255,255,255,.28);
+}
+.pub-group .pub-item { border-bottom:1px solid var(--g-line); margin:0; padding:12px 14px; }
+.pub-group .pub-item:last-child { border-bottom:none; }
+
+/* A parent shown only so its step has context — nothing to act on. */
+.pub-item.context { background:rgba(29,43,35,.04); }
+.pub-item.context .pub-item-name { color:var(--ink-2); font-weight:500; }
+
+/* A step sits under its parent. */
+.pub-item-step {
+  padding-left:26px !important;
+  border-left:2px solid rgba(76,106,99,.28);
+  background:rgba(255,255,255,.45);
+}
+
+.pub-note {
+  font-size:11.5px; color:var(--ink-2); line-height:1.55;
+  margin-top:5px; padding:7px 10px; border-radius:7px;
+  background:rgba(29,43,35,.045); border:1px solid var(--g-brd-2);
+  white-space:pre-wrap;
+}
+.pub-note-more {
+  font-size:11px; font-weight:600; color:var(--sage);
+  margin-left:6px; padding:0; background:none; border:none; cursor:pointer;
+}
+.pub-note-more:hover { color:var(--deep); text-decoration:underline; }
