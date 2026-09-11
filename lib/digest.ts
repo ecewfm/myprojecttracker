@@ -129,7 +129,7 @@ export async function buildDigest() {
         <div style="font-size:13.5px;font-weight:600;color:#16241d;margin-bottom:5px;">${esc(r.title)}</div>
         ${r.detail ? `<div style="font-size:12.5px;color:#3d5249;line-height:1.6;margin-bottom:8px;">${esc(r.detail)}</div>` : ""}
         <div style="font-size:11px;color:#6b8177;">
-          ${esc(r.owner?.name ?? "Unassigned")} &middot; open ${days} day${days === 1 ? "" : "s"} &middot;
+          ${esc(r.owners?.map((o) => o.name).join(", ") || "Unassigned")} &middot; open ${days} day${days === 1 ? "" : "s"} &middot;
           <span style="color:${colour};font-weight:600;">${label}</span>
         </div>
       </td></tr>
@@ -290,7 +290,7 @@ export async function buildProjectEmail(projectId: string) {
         milestones: p.milestones.map((m) => ({ name: m.name, done: m.done, note: m.note })),
         roadblocks: p.roadblocks.map((r) => ({
           title: r.title, detail: r.detail, status: r.status,
-          raised_at: r.raised_at, owner: r.owner?.name ?? "unassigned",
+          raised_at: r.raised_at, owner: r.owners?.map((o) => o.name).join(", ") || "unassigned",
         })),
         tasks: p.tasks.map((t) => ({
           name: t.name, done: t.done, due_date: t.due_date, assignee: t.assignees?.map((a) => a.name).join(", ") || "unassigned",

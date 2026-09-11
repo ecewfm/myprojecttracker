@@ -7,7 +7,7 @@ import { ROADBLOCK_STATUS, type RoadblockStatus } from "@/lib/types";
 interface Row {
   id: string; title: string; detail: string; status: RoadblockStatus;
   raised_at: string; target_date: string | null;
-  owner: { id: string; name: string } | null;
+  roadblock_owners?: { team_members: { id: string; name: string } | null }[];
   projects: { id: string; ref: string; title: string };
 }
 
@@ -71,7 +71,7 @@ function Inner() {
               </div>
               {r.detail && <div className="rb-desc">{r.detail}</div>}
               <div className="rb-foot">
-                <span>{r.owner?.name ?? "Unassigned"}</span>
+                <span>{(r.roadblock_owners ?? []).map((o) => o.team_members?.name).filter(Boolean).join(", ") || "Unassigned"}</span>
                 <span className="sep">·</span>
                 <span>Open {days(r.raised_at)} day{days(r.raised_at) === 1 ? "" : "s"}</span>
                 {r.target_date && (<><span className="sep">·</span><span>Target {r.target_date}</span></>)}

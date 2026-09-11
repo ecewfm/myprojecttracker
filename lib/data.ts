@@ -16,8 +16,8 @@ const SELECT = `
     task_assignees ( team_members ( id, name, email, active, job_position, account, site ) )
   ),
   roadblocks (
-    id, title, detail, status, raised_at, target_date,
-    owner:team_members!roadblocks_owner_id_fkey ( id, name, email, active, job_position, account, site )
+    id, title, detail, status, raised_at, target_date, note,
+    roadblock_owners ( team_members ( id, name, email, active, job_position, account, site ) )
   )
 `;
 
@@ -99,7 +99,11 @@ function shape(row: any): Project {
       note: t.note ?? "",
     })),
     roadblocks: (row.roadblocks ?? [])
-      .map((r: any) => ({ ...r, owner: r.owner ?? null }))
+      .map((r: any) => ({
+        ...r,
+        owners: (r.roadblock_owners ?? []).map((o: any) => o.team_members).filter(Boolean),
+        note: r.note ?? "",
+      }))
       .sort((a: any, b: any) => {
         // unresolved first, then newest
         const ar = a.status === "resolved" ? 1 : 0;

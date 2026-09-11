@@ -10,7 +10,11 @@ interface Item {
   depth?: number; child_total?: number; child_done?: number;
   parent_id?: string | null; parent_name?: string | null;
 }
-interface Block { id: string; title: string; detail: string; status: string; owner: string | null; raised_at: string }
+interface Block {
+  id: string; title: string; detail: string; status: string;
+  owner: string | null; raised_at: string;
+  note?: string; mine?: boolean; target_date?: string | null;
+}
 interface Data {
   viewer: { id: string; name: string; email: string };
   project: {
@@ -48,6 +52,31 @@ function Note({ text }: { text: string }) {
           {open ? "less" : "more"}
         </button>
       )}
+    </div>
+  );
+}
+
+function InlineNote({
+  value, onChange, onSave, onCancel, placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  placeholder?: string;
+}) {
+  return (
+    <div className="pub-form" style={{ marginTop: 8 }}>
+      <textarea
+        rows={2} autoFocus
+        placeholder={placeholder ?? "Add context…"}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="pub-btn solid" onClick={onSave}>Save note</button>
+        <button className="pub-link" onClick={onCancel}>Cancel</button>
+      </div>
     </div>
   );
 }
@@ -216,12 +245,28 @@ export default function PublicProject() {
                     <div className="pub-item-name">{m.name}</div>
                     <div className="pub-item-tag">Step assigned to you</div>
                     <Note text={m.note ?? ""} />
+                    {noteFor === m.id && (
+                      <InlineNote
+                        value={noteText}
+                        onChange={setNoteText}
+                        onCancel={() => { setNoteFor(null); setNoteText(""); }}
+                        onSave={async () => {
+                          await act({ action: "add_note", milestone_id: m.id, note: noteText }, "Note added.");
+                          setNoteText(""); setNoteFor(null);
+                        }}
+                      />
+                    )}
                   </div>
-                  <button
-                    className="pub-btn"
-                    disabled={busy === m.id}
-                    onClick={() => act({ action: "close_milestone", id: m.id }, "Marked complete. Thanks.")}
-                  >{busy === m.id ? "…" : "Mark done"}</button>
+                  <div className="pub-actions">
+                    <button
+                      className="pub-btn"
+                      disabled={busy === m.id}
+                      onClick={() => act({ action: "close_milestone", id: m.id }, "Marked complete. Thanks.")}
+                    >{busy === m.id ? "…" : "Mark done"}</button>
+                    <button className="pub-link" onClick={() => { setNoteFor(m.id); setNoteText(""); }}>
+                      Note
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -404,12 +449,60 @@ export default function PublicProject() {
               <div key={r.id} className="pub-rb" style={{ borderLeftColor: RB_COLOR[r.status] }}>
                 <div className="pub-rb-top">
                   <span className="pub-rb-title">{r.title}</span>
-                  <span className="pub-rb-status" style={{ color: RB_COLOR[r.status] }}>
-                    {RB_LABEL[r.status]}
-                  </span>
+                  {r.mine ? (
+                    // Owners set the status; everyone else sees it.
+                    <select
+                      className="pub-rb-select"
+                      value={r.status}
+                      style={{ color: RB_COLOR[r.status] }}
+                      onChange={(e) => act(
+                        { action: "set_roadblock_status", id: r.id, status: e.target.value },
+                        e.target.value === "resolved"
+                          ? "Resolved. Thanks — everyone waiting has been told."
+                          : "Status updated."
+                      )}
+                    >
+                      {Object.keys(RB_LABEL).map((k) => (
+                        <option key={k} value={k}>{RB_LABEL[k]}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="pub-rb-status" style={{ color: RB_COLOR[r.status] }}>
+                      {RB_LABEL[r.status]}
+                    </span>
+                  )}
                 </div>
+
                 {r.detail && <div className="pub-rb-detail">{r.detail}</div>}
-                <div className="pub-row-sub">{r.owner ?? "Unassigned"}</div>
+                <Note text={r.note ?? ""} />
+
+                <div className="pub-rb-foot">
+                  <span className="pub-row-sub">
+                    {r.owner ?? "Unassigned"}
+                    {r.mine ? " · you" : ""}
+                    {r.target_date ? ` · target ${r.target_date}` : ""}
+                  </span>
+                  {noteFor !== r.id && (
+                    <button className="pub-link" onClick={() => { setNoteFor(r.id); setNoteText(""); }}>
+                      Add a note
+                    </button>
+                  )}
+                </div>
+
+                {noteFor === r.id && (
+                  <InlineNote
+                    value={noteText}
+                    onChange={setNoteText}
+                    placeholder={r.mine
+                      ? "What's happened since — who you chased, what they said…"
+                      : "Anything you know that helps — this goes to whoever owns it."}
+                    onCancel={() => { setNoteFor(null); setNoteText(""); }}
+                    onSave={async () => {
+                      await act({ action: "roadblock_note", id: r.id, note: noteText }, "Note added.");
+                      setNoteText(""); setNoteFor(null);
+                    }}
+                  />
+                )}
               </div>
             ))}
           </div>

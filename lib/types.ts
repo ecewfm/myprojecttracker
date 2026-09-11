@@ -33,7 +33,8 @@ export interface Milestone {
 }
 export interface Roadblock {
   id: string; title: string; detail: string; status: RoadblockStatus;
-  owner: Member | null; raised_at: string; target_date: string | null;
+  owners: Member[]; note: string;
+  raised_at: string; target_date: string | null;
 }
 export interface Task {
   id: string; name: string; done: boolean; due_date: string | null;

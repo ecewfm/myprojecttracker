@@ -236,31 +236,35 @@ export async function runReminders() {
 
   // ── Open roadblocks ─────────────────────────────────
   if (settings.nudge_open_roadblocks) {
-    const { data: blocks } = await db
-      .from("roadblocks")
+    // One nudge per owner, each on their own clock.
+    const { data: blockRows } = await db
+      .from("roadblock_owners")
       .select(`
-        id, title, detail, status, raised_at, target_date, last_nudge_at, nudge_count,
-        owner:team_members!roadblocks_owner_id_fkey ( id, name, email ),
-        projects!inner ( id, title, reminders_on, archived )
-      `)
-      .neq("status", "resolved");
+        member_id, last_nudge_at, nudge_count,
+        team_members ( id, name, email ),
+        roadblocks!inner (
+          id, title, detail, status, raised_at, target_date,
+          projects!inner ( id, title, reminders_on, archived )
+        )
+      `);
 
-    for (const r of (blocks ?? []) as any[]) {
-      if (!r.owner?.email) continue;
+    for (const row of (blockRows ?? []) as any[]) {
+      const r = row.roadblocks, who = row.team_members;
+      if (!r || r.status === "resolved" || !who?.email) continue;
       if (!r.projects?.reminders_on || r.projects.archived) continue;
 
-      if (!due(r.last_nudge_at, daysUntil(r.target_date), true)) continue;
+      if (!due(row.last_nudge_at, daysUntil(r.target_date), true)) continue;
 
       try {
-        const url = await ensureShareUrl(r.projects.id, r.owner.id);
-        await cliqDM(r.owner.email, roadblockMessage(r, url));
-        await db.from("roadblocks")
-          .update({ last_nudge_at: new Date().toISOString(), nudge_count: r.nudge_count + 1 })
-          .eq("id", r.id);
-        await log("cliq_dm", `Roadblock nudge to ${r.owner.name} — ${r.title}`, r.projects.id);
+        const url = await ensureShareUrl(r.projects.id, who.id);
+        await cliqDM(who.email, roadblockMessage({ ...r, projects: r.projects }, url));
+        await db.from("roadblock_owners")
+          .update({ last_nudge_at: new Date().toISOString(), nudge_count: row.nudge_count + 1 })
+          .eq("roadblock_id", r.id).eq("member_id", who.id);
+        await log("cliq_dm", `Roadblock nudge to ${who.name} — ${r.title}`, r.projects.id);
         sent++;
       } catch (e: any) {
-        failures.push(`roadblock ${r.id}: ${e.message}`);
+        failures.push(`roadblock ${r.id}/${who.id}: ${e.message}`);
       }
     }
   }
@@ -282,8 +286,8 @@ export async function notifyRoadblock(
   const { data: r } = await db
     .from("roadblocks")
     .select(`
-      id, title, detail, status, owner_id,
-      owner:team_members!roadblocks_owner_id_fkey ( name, email ),
+      id, title, detail, status,
+      roadblock_owners ( team_members ( id, name, email ) ),
       projects ( id, title, owner:team_members!projects_owner_id_fkey ( name, email ) )
     `)
     .eq("id", roadblockId)
@@ -292,14 +296,17 @@ export async function notifyRoadblock(
   if (!r) return;
   const rb = r as any;
   const recipients = new Set<string>();
-  if (rb.owner?.email) recipients.add(rb.owner.email);
+  for (const o of rb.roadblock_owners ?? []) {
+    if (o.team_members?.email) recipients.add(o.team_members.email);
+  }
   if (kind === "escalated" && settings?.copy_manager && rb.projects?.owner?.email) {
     recipients.add(rb.projects.owner.email);
   }
 
-  // Owner gets a link so they can see the project context.
-  const ownerLink = rb.owner_id
-    ? await ensureShareUrl(rb.projects.id, rb.owner_id)
+  // The first owner's link works for the project, which is what matters.
+  const firstOwner = (rb.roadblock_owners ?? [])[0]?.team_members?.id;
+  const ownerLink = firstOwner
+    ? await ensureShareUrl(rb.projects.id, firstOwner)
     : null;
 
   const text =
@@ -366,4 +373,64 @@ export async function notifyMilestoneAssignment(milestoneId: string, memberId: s
       (url ? `\n\nMark it complete here when it's done:\n${url}` : "")
   );
   await log("cliq_dm", `Milestone assigned to ${who.name} — ${ms.name}`, ms.projects.id);
+}
+
+/** Someone has just been put on a roadblock. */
+export async function notifyRoadblockOwner(roadblockId: string, memberId: string) {
+  const [{ data: r }, { data: who }] = await Promise.all([
+    db.from("roadblocks")
+      .select("id, title, detail, target_date, projects ( id, title )")
+      .eq("id", roadblockId).single(),
+    db.from("team_members").select("id, name, email").eq("id", memberId).single(),
+  ]);
+
+  const rb = r as any;
+  if (!rb || !who?.email) return;
+
+  const url = await ensureShareUrl(rb.projects.id, memberId);
+
+  await cliqDM(
+    who.email,
+    `*${rb.projects.title}* — roadblock assigned to you: "${rb.title}"` +
+      (rb.detail ? `\n${rb.detail}` : "") +
+      (rb.target_date ? `\nTarget ${rb.target_date}.` : "") +
+      (url ? `\n\nUpdate it here:\n${url}` : "")
+  );
+  await log("cliq_dm", `Roadblock assigned to ${who.name} — ${rb.title}`, rb.projects.id);
+}
+
+/**
+ * A roadblock has been resolved. This gets its own immediate message rather
+ * than waiting for the next digest — people are usually waiting on it, and
+ * the news is only useful while it's still news.
+ */
+export async function notifyRoadblockResolved(roadblockId: string) {
+  const { data: r } = await db
+    .from("roadblocks")
+    .select(`
+      id, title, projects ( id, title ),
+      roadblock_owners ( team_members ( name, email ) )
+    `)
+    .eq("id", roadblockId).single();
+
+  const rb = r as any;
+  if (!rb) return;
+
+  const text =
+    `*${rb.projects.title}* — roadblock resolved: "${rb.title}"\n` +
+    `Reminders for it stop here.`;
+
+  // The channel first, so whoever was waiting sees it without being DM'd.
+  const channel = process.env.OWNER_CLIQ_CHANNEL;
+  if (channel) {
+    try { await cliqChannel(channel, text); } catch { /* fall through to DMs */ }
+  }
+
+  for (const o of rb.roadblock_owners ?? []) {
+    const email = o.team_members?.email;
+    if (!email) continue;
+    try { await cliqDM(email, text); } catch { /* one failure shouldn't stop the rest */ }
+  }
+
+  await log("roadblock", `Resolved: ${rb.title}`, rb.projects?.id);
 }

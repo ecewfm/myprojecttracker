@@ -24,7 +24,7 @@ export async function POST(req: Request) {
       milestones: p.milestones.map((m) => ({ name: m.name, done: m.done, note: m.note })),
       roadblocks: p.roadblocks.map((r) => ({
         title: r.title, detail: r.detail, status: r.status,
-        raised_at: r.raised_at, owner: r.owner?.name ?? "unassigned",
+        raised_at: r.raised_at, owner: r.owners?.map((o) => o.name).join(", ") || "unassigned",
       })),
       tasks: p.tasks.map((t) => ({
         name: t.name, done: t.done, due_date: t.due_date,

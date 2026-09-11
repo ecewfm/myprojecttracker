@@ -134,7 +134,7 @@ export function buildWorkbook(p: Project | null): Buffer {
   for (const r of p?.roadblocks ?? []) {
     rRows.push([
       r.id, "", r.title, r.detail ?? "", r.status,
-      r.owner?.email ?? "", r.target_date ?? "",
+      r.owners?.[0]?.email ?? "", r.target_date ?? "",
     ]);
   }
   const wsR = XLSX.utils.aoa_to_sheet(rRows);

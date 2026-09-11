@@ -5,7 +5,8 @@ import { api, useToast } from "./Shell";
 import { formatDateInZone, zoneLabel, zoneToday } from "@/lib/tz";
 import {
   ROADBLOCK_STATUS, STATUS_COLUMNS,
-  type Project, type Member, type Milestone, type Task, type RoadblockStatus, type ProjectStatus,
+  type Project, type Member, type Milestone, type Task, type Roadblock,
+  type RoadblockStatus, type ProjectStatus,
 } from "@/lib/types";
 
 const todayStr = () => zoneToday();
@@ -478,6 +479,129 @@ function TaskRow({
   );
 }
 
+/* ─────────── roadblock card ─────────── */
+function RoadblockCard({
+  r, members, busyStatus, onSave, onDelete,
+}: {
+  r: Roadblock;
+  members: Member[];
+  busyStatus: (s: RoadblockStatus) => void;
+  onSave: (patch: Record<string, unknown>) => void;
+  onDelete: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState(r.title);
+  const [detail, setDetail] = useState(r.detail);
+  const [note, setNote] = useState(r.note ?? "");
+  const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => {
+    setTitle(r.title); setDetail(r.detail); setNote(r.note ?? "");
+  }, [r.title, r.detail, r.note]);
+
+  function editNote(v: string) {
+    setNote(v);
+    setState("saving");
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      onSave({ note: v });
+      setState("saved");
+      setTimeout(() => setState("idle"), 1400);
+    }, 700);
+  }
+
+  const owners = r.owners ?? [];
+
+  return (
+    <div className="rb" data-s={r.status}>
+      <div className="rb-top">
+        <span
+          className="rb-title rb-clickable"
+          role="button" tabIndex={0}
+          onClick={() => setOpen((o) => !o)}
+          onKeyDown={(e) => { if (e.key === "Enter") setOpen((o) => !o); }}
+        >
+          {r.title}
+          <span className="ms-car" style={{ marginLeft: 7 }}>▸</span>
+        </span>
+        <StatusControl value={r.status} onChange={busyStatus} />
+      </div>
+
+      {!open && r.detail && <div className="rb-desc">{r.detail}</div>}
+      {!open && r.note && <div className="rb-note-peek">{r.note}</div>}
+
+      <div className="rb-foot">
+        <span>
+          {owners.length
+            ? owners.map((o) => o.name).join(", ")
+            : <span style={{ color: "var(--red)" }}>Nobody assigned</span>}
+        </span>
+        <span className="sep">·</span>
+        <span>Raised {formatDateInZone(r.raised_at)}</span>
+        {r.target_date && (<><span className="sep">·</span><span>Target {r.target_date}</span></>)}
+        {r.status !== "resolved" && owners.length > 0 && (
+          <><span className="sep">·</span><span>Cliq nudge active</span></>
+        )}
+        {!open && (
+          <button className="rb-edit" onClick={() => setOpen(true)}>Edit</button>
+        )}
+      </div>
+
+      {open && (
+        <div className="rb-body">
+          <label>Title</label>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onBlur={() => { if (title.trim() && title !== r.title) onSave({ title: title.trim() }); }}
+          />
+
+          <label>What's blocking it</label>
+          <textarea
+            rows={3}
+            value={detail}
+            onChange={(e) => setDetail(e.target.value)}
+            onBlur={() => { if (detail !== r.detail) onSave({ detail }); }}
+          />
+
+          <AssigneePicker
+            selected={owners}
+            members={members}
+            onChange={(ids) => onSave({ owner_ids: ids })}
+            label="Owned by"
+          />
+
+          <label>Target date (optional)</label>
+          <input
+            type="date"
+            defaultValue={r.target_date ?? ""}
+            onChange={(e) => onSave({ target_date: e.target.value || null })}
+          />
+
+          <label>Notes — what's happened since</label>
+          <textarea
+            rows={3}
+            value={note}
+            placeholder="Who was chased, what they said, what you're waiting on…"
+            onChange={(e) => editNote(e.target.value)}
+          />
+
+          <div className="ms-body-foot">
+            <span>
+              {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : note ? "Saved" : "Empty"}
+            </span>
+            <button onClick={() => setOpen(false)}>Close</button>
+            <button onClick={onDelete} style={{ marginLeft: "auto", color: "var(--red)" }}>
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─────────── panel ─────────── */
 export default function ProjectPanel({
   project, members, onClose, onChange,
@@ -490,7 +614,7 @@ export default function ProjectPanel({
   const toast = useToast();
   const [p, setP] = useState(project);
   const [showRbForm, setShowRbForm] = useState(false);
-  const [rbDraft, setRbDraft] = useState({ title: "", detail: "", owner_id: "", status: "open" as RoadblockStatus });
+  const [rbDraft, setRbDraft] = useState<{ title: string; detail: string; owner_ids: string[]; status: RoadblockStatus }>({ title: "", detail: "", owner_ids: [], status: "open" });
   const [analysing, setAnalysing] = useState(false);
   const [meeting, setMeeting] = useState({ start: "", minutes: 30 });
   const [taskDraft, setTaskDraft] = useState<{ name: string; assignee_ids: string[]; due_date: string }>({ name: "", assignee_ids: [], due_date: "" });
@@ -571,14 +695,52 @@ export default function ProjectPanel({
     } catch (e: any) { toast(e.message, "err"); }
   }
 
+  async function updateRoadblock(id: string, changes: Record<string, unknown>) {
+    const picked = Array.isArray(changes.owner_ids)
+      ? members.filter((m) => (changes.owner_ids as string[]).includes(m.id))
+      : null;
+
+    patch(
+      (d) => ({
+        ...d,
+        roadblocks: d.roadblocks.map((r) => r.id === id ? {
+          ...r,
+          ...(changes.title !== undefined ? { title: changes.title as string } : {}),
+          ...(changes.detail !== undefined ? { detail: changes.detail as string } : {}),
+          ...(changes.note !== undefined ? { note: changes.note as string } : {}),
+          ...(changes.target_date !== undefined
+            ? { target_date: changes.target_date as string | null } : {}),
+          ...(picked ? { owners: picked } : {}),
+        } : r),
+      }),
+      async () => {
+        await api(`/api/roadblocks/${id}`, { method: "PATCH", body: changes });
+        if (picked) {
+          toast(picked.length
+            ? `Assigned to ${picked.length === 1 ? picked[0].name.split(" ")[0] : `${picked.length} people`}. They've been messaged.`
+            : "Owners cleared.");
+        }
+      }
+    );
+  }
+
+  async function deleteRoadblock(id: string, title: string) {
+    if (!confirm(`Delete the roadblock "${title}"?`)) return;
+    try {
+      await api(`/api/roadblocks/${id}`, { method: "DELETE" });
+      await refresh();
+      toast("Deleted.");
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
   async function addRoadblock() {
     if (!rbDraft.title.trim()) { toast("Give the roadblock a title.", "err"); return; }
     try {
       await api("/api/roadblocks", {
         method: "POST",
-        body: { ...rbDraft, project_id: p!.id, owner_id: rbDraft.owner_id || null },
+        body: { ...rbDraft, project_id: p!.id },
       });
-      setRbDraft({ title: "", detail: "", owner_id: "", status: "open" });
+      setRbDraft({ title: "", detail: "", owner_ids: [], status: "open" });
       setShowRbForm(false);
       await refresh();
       toast("Roadblock logged. The owner has been messaged.");
@@ -987,24 +1149,14 @@ export default function ProjectPanel({
             )}
 
             {p.roadblocks.map((r) => (
-              <div key={r.id} className="rb" data-s={r.status}>
-                <div className="rb-top">
-                  <span className="rb-title">{r.title}</span>
-                  <StatusControl
-                    value={r.status}
-                    onChange={(s) => setRoadblockStatus(r.id, s, r.status)}
-                  />
-                </div>
-                {r.detail && <div className="rb-desc">{r.detail}</div>}
-                <div className="rb-foot">
-                  <span>{r.owner?.name ?? "Unassigned"}</span>
-                  <span className="sep">·</span>
-                  <span>Raised {formatDateInZone(r.raised_at)}</span>
-                  {r.status !== "resolved" && (
-                    <><span className="sep">·</span><span>Cliq nudge active</span></>
-                  )}
-                </div>
-              </div>
+              <RoadblockCard
+                key={r.id}
+                r={r}
+                members={members}
+                busyStatus={(s) => setRoadblockStatus(r.id, s, r.status)}
+                onSave={(patch) => updateRoadblock(r.id, patch)}
+                onDelete={() => deleteRoadblock(r.id, r.title)}
+              />
             ))}
 
             {showRbForm && (
@@ -1015,10 +1167,25 @@ export default function ProjectPanel({
                   value={rbDraft.detail}
                   onChange={(e) => setRbDraft({ ...rbDraft, detail: e.target.value })} />
                 <div className="rb-add-row">
-                  <select value={rbDraft.owner_id}
-                    onChange={(e) => setRbDraft({ ...rbDraft, owner_id: e.target.value })}>
-                    <option value="">Who owns it?</option>
-                    {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      if (!e.target.value) return;
+                      setRbDraft((d) => ({
+                        ...d,
+                        owner_ids: d.owner_ids.includes(e.target.value)
+                          ? d.owner_ids : [...d.owner_ids, e.target.value],
+                      }));
+                      e.target.value = "";
+                    }}>
+                    <option value="">
+                      {rbDraft.owner_ids.length
+                        ? `${rbDraft.owner_ids.length} assigned — add another`
+                        : "Who owns it?"}
+                    </option>
+                    {members
+                      .filter((m) => !rbDraft.owner_ids.includes(m.id))
+                      .map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
                   </select>
                   <select value={rbDraft.status}
                     onChange={(e) => setRbDraft({ ...rbDraft, status: e.target.value as RoadblockStatus })}>

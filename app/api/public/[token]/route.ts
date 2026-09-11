@@ -64,7 +64,7 @@ export async function GET(_: Request, { params }: { params: { token: string } })
       })),
       roadblocks: p.roadblocks.map((r) => ({
         id: r.id, title: r.title, detail: r.detail, status: r.status,
-        owner: r.owner?.name ?? null,
+        owner: r.owners?.map((o) => o.name).join(", ") || null,
         raised_at: r.raised_at,
       })),
     },
@@ -194,6 +194,73 @@ export async function POST(req: Request, { params }: { params: { token: string }
     await recordSubmission({
       projectId: ctx.projectId, memberId: me, memberName: ctx.member.name,
       kind: "note_added", subject, note,
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── an owner changes a roadblock's status ──
+  if (action === "set_roadblock_status") {
+    const valid = ["open", "progress", "escalated", "resolved"];
+    if (!valid.includes(body.status)) {
+      return NextResponse.json({ error: "unknown status" }, { status: 400 });
+    }
+
+    const { data: rb } = await db.from("roadblocks")
+      .select("id, title, status, project_id").eq("id", body.id).single();
+    if (!rb || rb.project_id !== ctx.projectId) {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+
+    const { data: owns } = await db.from("roadblock_owners")
+      .select("member_id").eq("roadblock_id", rb.id).eq("member_id", me).maybeSingle();
+    if (!owns) {
+      return NextResponse.json({
+        error: "Only the people this roadblock is assigned to can change its status. You can still add a note.",
+      }, { status: 403 });
+    }
+
+    await db.from("roadblocks").update({
+      status: body.status,
+      resolved_at: body.status === "resolved" ? new Date().toISOString() : null,
+      last_nudge_at: new Date().toISOString(),
+    }).eq("id", rb.id);
+
+    await db.from("roadblock_events").insert({
+      roadblock_id: rb.id, from_status: rb.status, to_status: body.status,
+      note: `Changed by ${ctx.member.name} from their project link`,
+    });
+
+    if (body.status === "resolved") {
+      const { notifyRoadblockResolved } = await import("@/lib/reminders");
+      notifyRoadblockResolved(rb.id).catch(() => {});
+    }
+
+    await recordSubmission({
+      projectId: ctx.projectId, memberId: me, memberName: ctx.member.name,
+      kind: "roadblock_added", subject: `${rb.title} → ${body.status}`, note: body.note,
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── anyone with a link can add context to a roadblock ──
+  if (action === "roadblock_note") {
+    const note = (body.note ?? "").trim();
+    if (!note) return NextResponse.json({ error: "Write something first." }, { status: 400 });
+
+    const { data: rb } = await db.from("roadblocks")
+      .select("id, title, note, project_id").eq("id", body.id).single();
+    if (!rb || rb.project_id !== ctx.projectId) {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+
+    const stamp = `[${ctx.member.name}] ${note}`;
+    await db.from("roadblocks")
+      .update({ note: rb.note ? `${rb.note}\n${stamp}` : stamp })
+      .eq("id", rb.id);
+
+    await recordSubmission({
+      projectId: ctx.projectId, memberId: me, memberName: ctx.member.name,
+      kind: "note_added", subject: rb.title, note,
     });
     return NextResponse.json({ ok: true });
   }

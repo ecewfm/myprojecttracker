@@ -996,3 +996,50 @@ button:disabled { opacity:.5; cursor:not-allowed; }
   margin-left:6px; padding:0; background:none; border:none; cursor:pointer;
 }
 .pub-note-more:hover { color:var(--deep); text-decoration:underline; }
+
+/* ── roadblock card, expanded for editing ── */
+.rb-clickable { cursor:pointer; }
+.rb-clickable:hover { color:var(--deep); }
+.rb-clickable .ms-car { font-size:9px; color:var(--ink-3); }
+.rb-note-peek {
+  font-size:11.5px; color:var(--ink-2); line-height:1.55;
+  margin:6px 0 8px; padding:7px 10px; border-radius:7px;
+  background:rgba(255,255,255,.5); border:1px solid var(--g-brd-2);
+  white-space:pre-wrap;
+}
+.rb-edit {
+  margin-left:auto; font-size:11px; font-weight:500; color:var(--ink-2);
+  padding:3px 9px; border-radius:7px;
+  background:rgba(255,255,255,.55); border:1px solid var(--g-brd-2);
+}
+.rb-edit:hover { background:#fff; color:var(--ink); }
+.rb-body { margin-top:12px; padding-top:12px; border-top:1px solid var(--g-line); }
+.rb-body label {
+  display:block; font-size:10px; color:var(--ink-3); margin-bottom:6px;
+  letter-spacing:.06em; text-transform:uppercase; font-weight:600;
+}
+.rb-body input, .rb-body textarea, .rb-body select {
+  width:100%; padding:9px 11px; border-radius:9px; margin-bottom:12px;
+  border:1px solid var(--g-brd-2); background:rgba(255,255,255,.6);
+  font-size:13px; resize:vertical; transition:all .15s;
+}
+.rb-body input:focus, .rb-body textarea:focus, .rb-body select:focus {
+  outline:none; border-color:rgba(63,122,92,.5); background:#fff;
+}
+
+/* ── public page: roadblock controls, side-by-side actions ── */
+.pub-rb-select {
+  font-size:10px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
+  padding:4px 8px; border-radius:7px; cursor:pointer;
+  background:rgba(255,255,255,.75); border:1px solid var(--g-brd);
+}
+.pub-rb-foot {
+  display:flex; align-items:center; justify-content:space-between;
+  gap:12px; margin-top:7px; flex-wrap:wrap;
+}
+.pub-actions { display:flex; align-items:center; gap:7px; flex-shrink:0; }
+
+@media (max-width:520px) {
+  .pub-actions { width:100%; }
+  .pub-actions .pub-btn { flex:1; }
+}
