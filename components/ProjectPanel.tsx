@@ -78,7 +78,7 @@ function StatusControl({
 
 /* ─────────── milestone with notes ─────────── */
 /* ─────────── multi-assignee picker ─────────── */
-function AssigneePicker({
+export function AssigneePicker({
   selected, members, onChange, label = "Assigned to (optional)",
 }: {
   selected: Member[];
@@ -480,7 +480,7 @@ function TaskRow({
 }
 
 /* ─────────── roadblock card ─────────── */
-function RoadblockCard({
+export function RoadblockCard({
   r, members, busyStatus, onSave, onDelete,
 }: {
   r: Roadblock;

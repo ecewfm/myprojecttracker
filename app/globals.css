@@ -1043,3 +1043,15 @@ button:disabled { opacity:.5; cursor:not-allowed; }
   .pub-actions { width:100%; }
   .pub-actions .pub-btn { flex:1; }
 }
+
+/* ── roadblocks page: project link above each card ── */
+.rb-wrap { margin-bottom:12px; }
+.rb-project {
+  display:block; width:100%; text-align:left;
+  font-size:11px; font-weight:600; color:var(--ink-3);
+  padding:6px 14px 5px; border-radius:9px 9px 0 0;
+  background:rgba(255,255,255,.34); border:1px solid var(--g-brd-2);
+  border-bottom:none; transition:all .14s;
+}
+.rb-project:hover { background:rgba(255,255,255,.7); color:var(--deep); }
+.rb-wrap .rb { margin-bottom:0; border-radius:0 0 12px 12px; }
