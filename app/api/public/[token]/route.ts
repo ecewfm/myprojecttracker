@@ -93,13 +93,20 @@ export async function POST(req: Request, { params }: { params: { token: string }
   // ── close an action item assigned to them ──
   if (action === "close_task") {
     const { data: task } = await db.from("tasks")
-      .select("id, name, assignee_id, project_id")
+      .select("id, name, project_id")
       .eq("id", body.id).single();
 
     if (!task || task.project_id !== ctx.projectId) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
-    if (task.assignee_id !== me) {
+
+    // Assignees live in task_assignees since several people can share an
+    // item. This used to read the old single-owner column, which has been
+    // null since that change — so every close was refused.
+    const { data: mine } = await db.from("task_assignees")
+      .select("member_id").eq("task_id", task.id).eq("member_id", me).maybeSingle();
+
+    if (!mine) {
       return NextResponse.json({ error: "That item isn't assigned to you." }, { status: 403 });
     }
 
@@ -117,13 +124,17 @@ export async function POST(req: Request, { params }: { params: { token: string }
   // ── close a milestone assigned to them ──
   if (action === "close_milestone") {
     const { data: ms } = await db.from("milestones")
-      .select("id, name, assignee_id, project_id")
+      .select("id, name, project_id")
       .eq("id", body.id).single();
 
     if (!ms || ms.project_id !== ctx.projectId) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
-    if (ms.assignee_id !== me) {
+
+    const { data: mine } = await db.from("milestone_assignees")
+      .select("member_id").eq("milestone_id", ms.id).eq("member_id", me).maybeSingle();
+
+    if (!mine) {
       return NextResponse.json({ error: "That milestone isn't assigned to you." }, { status: 403 });
     }
 

@@ -702,13 +702,11 @@ export async function applyImport(
     const toInsert: any[] = [];
 
     for (const r of liveR) {
-      const ownerE = splitEmails(r["Owner email"])[0];
       const st = (r["Status"] || "open").toLowerCase();
       const fields = {
         title: r["Roadblock"],
         detail: r["Detail"] ?? "",
         status: valid.includes(st) ? st : "open",
-        owner_id: ownerE ? await memberId(ownerE) : null,
         target_date: toDate(r["Target date"]),
         project_id: projectId,
       };
@@ -726,6 +724,36 @@ export async function applyImport(
       const { error } = await db.from("roadblocks").insert(toInsert);
       if (error) result.problems.push(`Roadblocks: ${error.message}`);
       else result.created += toInsert.length;
+    }
+
+    // Owners live in roadblock_owners, so they're attached after the rows
+    // exist rather than as a column on them. The Owner email column takes
+    // several addresses, same as the assignee columns elsewhere.
+    const { data: allR } = await db.from("roadblocks")
+      .select("id, title").eq("project_id", projectId);
+    const byTitle = new Map(
+      (allR ?? []).map((rb: any) => [String(rb.title).trim().toLowerCase(), rb.id])
+    );
+
+    const ownerTargets: { id: string; emails: string[] }[] = [];
+    for (const r of liveR) {
+      const id = r["ID"] || byTitle.get(String(r["Roadblock"]).trim().toLowerCase());
+      const emails = splitEmails(r["Owner email"]);
+      if (id && emails.length) ownerTargets.push({ id, emails });
+    }
+
+    if (ownerTargets.length) {
+      const touched = ownerTargets.map((t) => t.id);
+      await db.from("roadblock_owners").delete().in("roadblock_id", touched);
+
+      const inserts: { roadblock_id: string; member_id: string }[] = [];
+      for (const t of ownerTargets) {
+        for (const email of t.emails) {
+          const mid = await memberId(email);
+          if (mid) inserts.push({ roadblock_id: t.id, member_id: mid });
+        }
+      }
+      if (inserts.length) await db.from("roadblock_owners").insert(inserts);
     }
   }
 

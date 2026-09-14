@@ -15,7 +15,7 @@ import { ensureShareUrl } from "./ensure-link";
  * thread of which item belongs where.
  */
 
-type Kind = "milestone" | "task";
+type Kind = "milestone" | "task" | "roadblock";
 
 interface Item {
   kind: Kind;
@@ -91,16 +91,26 @@ function buildMessage(
 ): string {
   const milestones = items.filter((i) => i.kind === "milestone");
   const tasks = items.filter((i) => i.kind === "task");
+  const blocks = items.filter((i) => i.kind === "roadblock");
 
   // One item reads better as a sentence than as a list of one.
   if (items.length === 1) {
     const i = items[0];
-    const label = i.kind === "milestone" ? "milestone" : "action item";
+    const label =
+      i.kind === "milestone" ? "milestone"
+      : i.kind === "roadblock" ? "roadblock"
+      : "action item";
     return (
       `*${projectTitle}* — ${label} ${headline}: "${i.name}"` +
       (i.due ? `\nDue ${i.due}.` : "") +
       imageLines(i) +
-      (url ? `\n\n${i.kind === "milestone" ? "Mark it complete" : "Close it"} here:\n${url}` : "")
+      (url
+        ? `\n\n${
+            i.kind === "milestone" ? "Mark it complete"
+            : i.kind === "roadblock" ? "Update it"
+            : "Close it"
+          } here:\n${url}`
+        : "")
     );
   }
 
@@ -117,6 +127,11 @@ function buildMessage(
   if (tasks.length) {
     parts.push(
       `\n*Action items*\n` + tasks.map(line).join("\n")
+    );
+  }
+  if (blocks.length) {
+    parts.push(
+      `\n*Roadblocks*\n` + blocks.map(line).join("\n")
     );
   }
   if (url) parts.push(`\nUpdate them here:\n${url}`);

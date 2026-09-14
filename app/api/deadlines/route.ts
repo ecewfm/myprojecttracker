@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { db, log } from "@/lib/supabase";
 import { isSignedIn } from "@/lib/auth";
-import { cliqDM } from "@/lib/zoho";
-import { ensureShareUrl } from "@/lib/ensure-link";
+import { DigestBatch } from "@/lib/digest-batch";
 import { zoneToday, daysUntilInZone } from "@/lib/tz";
 
 interface Row {
@@ -101,7 +100,7 @@ export async function GET(req: Request) {
     .select(`
       id, title, target_date, last_nudge_at, status,
       projects!inner ( id, ref, title, archived ),
-      owner:team_members!roadblocks_owner_id_fkey ( id, name, email )
+      roadblock_owners ( team_members ( id, name, email ) )
     `)
     .neq("status", "resolved")
     .not("target_date", "is", null)
@@ -117,7 +116,7 @@ export async function GET(req: Request) {
       due_date: r.target_date,
       days_left: daysUntilInZone(r.target_date),
       project: { id: r.projects.id, ref: r.projects.ref, title: r.projects.title },
-      assignees: r.owner ? [r.owner] : [],
+      assignees: (r.roadblock_owners ?? []).map((o: any) => o.team_members).filter(Boolean),
       last_nudge_at: r.last_nudge_at,
     });
   }
@@ -141,61 +140,82 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Nothing selected." }, { status: 400 });
   }
 
-  let sent = 0;
   const problems: string[] = [];
   const now = new Date().toISOString();
+
+  // One message per person per project, rather than one per item. Picking
+  // eight overdue items used to fire eight separate DMs at whoever owned
+  // them, which is the surest way to get the reminders muted.
+  const batch = new DigestBatch();
 
   for (const key of keys as string[]) {
     const [kind, id] = key.split(":");
     try {
       if (kind === "milestone") {
         const { data: m } = await db.from("milestones")
-          .select("id, name, due_date, projects ( id, title ), milestone_assignees ( team_members ( id, name, email ) )")
+          .select(`
+            id, name, due_date,
+            projects ( id, title ),
+            milestone_assignees ( team_members ( id, name, email ) )
+          `)
           .eq("id", id).single();
+
         const ms = m as any;
-        for (const a of (ms?.milestone_assignees ?? [])) {
+        if (!ms) continue;
+
+        for (const a of ms.milestone_assignees ?? []) {
           const who = a.team_members;
           if (!who?.email) continue;
-          const url = await ensureShareUrl(ms.projects.id, who.id);
-          await cliqDM(who.email,
-            `*${ms.projects.title}* — a reminder about milestone "${ms.name}"` +
-            (ms.due_date ? `, due ${ms.due_date}.` : ".") +
-            (url ? `\n\nMark it complete here:\n${url}` : ""));
-          sent++;
+          batch.add(ms.projects.id, who.id, {
+            kind: "milestone", name: ms.name, due: ms.due_date,
+          });
         }
         await db.from("milestone_assignees")
           .update({ last_nudge_at: now }).eq("milestone_id", id);
 
       } else if (kind === "task") {
         const { data: t } = await db.from("tasks")
-          .select("id, name, due_date, projects ( id, title ), task_assignees ( team_members ( id, name, email ) )")
+          .select(`
+            id, name, due_date,
+            projects ( id, title ),
+            task_assignees ( team_members ( id, name, email ) )
+          `)
           .eq("id", id).single();
+
         const task = t as any;
-        for (const a of (task?.task_assignees ?? [])) {
+        if (!task) continue;
+
+        for (const a of task.task_assignees ?? []) {
           const who = a.team_members;
           if (!who?.email) continue;
-          const url = await ensureShareUrl(task.projects.id, who.id);
-          await cliqDM(who.email,
-            `*${task.projects.title}* — a reminder about "${task.name}"` +
-            (task.due_date ? `, due ${task.due_date}.` : ".") +
-            (url ? `\n\nClose it here:\n${url}` : ""));
-          sent++;
+          batch.add(task.projects.id, who.id, {
+            kind: "task", name: task.name, due: task.due_date,
+          });
         }
         await db.from("task_assignees").update({ last_nudge_at: now }).eq("task_id", id);
 
       } else if (kind === "roadblock") {
+        // Owners moved to roadblock_owners; this was still reading the
+        // retired single-owner column, so nobody was being messaged.
         const { data: r } = await db.from("roadblocks")
-          .select("id, title, detail, target_date, owner_id, projects ( id, title ), owner:team_members!roadblocks_owner_id_fkey ( id, name, email )")
+          .select(`
+            id, title, target_date,
+            projects ( id, title ),
+            roadblock_owners ( team_members ( id, name, email ) )
+          `)
           .eq("id", id).single();
+
         const rb = r as any;
-        if (rb?.owner?.email) {
-          const url = await ensureShareUrl(rb.projects.id, rb.owner.id);
-          await cliqDM(rb.owner.email,
-            `*${rb.projects.title}* — roadblock still open: "${rb.title}"` +
-            (rb.target_date ? `\nTarget ${rb.target_date}.` : "") +
-            (url ? `\n\nProject view:\n${url}` : ""));
-          sent++;
+        if (!rb) continue;
+
+        for (const o of rb.roadblock_owners ?? []) {
+          const who = o.team_members;
+          if (!who?.email) continue;
+          batch.add(rb.projects.id, who.id, {
+            kind: "roadblock", name: rb.title, due: rb.target_date,
+          });
         }
+        await db.from("roadblock_owners").update({ last_nudge_at: now }).eq("roadblock_id", id);
         await db.from("roadblocks").update({ last_nudge_at: now }).eq("id", id);
       }
     } catch (e: any) {
@@ -203,6 +223,16 @@ export async function POST(req: Request) {
     }
   }
 
-  await log("cliq_dm", `Manual resend — ${sent} message(s) across ${keys.length} item(s)`);
+  const people = batch.size;
+  const sent = await batch.flush("still open for you");
+
+  if (!sent && !problems.length) {
+    problems.push("Nothing was sent — none of the selected items has anyone assigned.");
+  }
+
+  await log(
+    "cliq_dm",
+    `Manual resend — ${sent} message(s) to ${people} person(s) across ${keys.length} item(s)`
+  );
   return NextResponse.json({ sent, problems });
 }
