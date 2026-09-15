@@ -51,13 +51,15 @@ function Inner() {
     try {
       const [settings, log] = await Promise.all([
         api<Settings>("/api/settings"),
-        api<any[]>("/api/activity"),
+        // The endpoint returns { rows, next }; it used to return a bare
+        // array. Accept either, so a change at one end can't blank this page.
+        api<any>("/api/activity?limit=8"),
       ]);
       setS(settings);
       setRecipients((settings.digest_recipients ?? []).join(", "));
       setAnalysisPrompt(settings.analysis_prompt ?? "");
       setDigestPrompt(settings.digest_prompt ?? "");
-      setActivity(log);
+      setActivity(Array.isArray(log) ? log : log?.rows ?? []);
     } catch (e: any) { toast(e.message, "err"); }
   }, [toast]);
 
@@ -357,13 +359,20 @@ function Inner() {
           {/* activity */}
           <div className="sect">
             <div className="sect-title">Recent activity</div>
+            <div className="sect-desc">
+              The last few things the automations did.{" "}
+              <a href="/activity" style={{ color: "var(--moss)", fontWeight: 500 }}>
+                See the full history
+              </a>{" "}
+              to filter by type and read what was actually sent.
+            </div>
             <div className="sect-desc">What the automations have done lately.</div>
             {activity.length === 0 && <div className="empty">Nothing yet.</div>}
-            {activity.map((a) => (
+            {(Array.isArray(activity) ? activity : []).map((a) => (
               <div key={a.id} className="log-item">
                 <b>{a.summary}</b>
                 <div className="log-t">
-                  {formatInZone(a.created_at)}
+                  {formatInZone(a.at ?? a.created_at)}
                 </div>
               </div>
             ))}

@@ -83,10 +83,14 @@ export function daysUntilInZone(date: string | null, now = new Date()): number |
 
 /** For display: a timestamp rendered in the app's zone. */
 export function formatInZone(
-  value: string | Date,
+  value: string | Date | null | undefined,
   opts: Intl.DateTimeFormatOptions = { dateStyle: "medium", timeStyle: "short" }
 ): string {
+  if (!value) return "";
   const d = typeof value === "string" ? new Date(value) : value;
+  // Intl throws on an invalid date, which would take a whole page down for
+  // the sake of one timestamp. A blank is the better failure.
+  if (isNaN(d.getTime())) return "";
   return new Intl.DateTimeFormat("en-US", { timeZone: TZ, ...opts }).format(d);
 }
 
