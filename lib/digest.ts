@@ -172,7 +172,7 @@ export async function buildDigest() {
 
   <tr><td style="background:#1d2b23;padding:26px 30px 22px;">
     <div style="font-size:10px;font-weight:700;letter-spacing:.22em;color:#8fc9a8;text-transform:uppercase;">ECE</div>
-    <div style="font-size:22px;font-weight:600;color:#ffffff;letter-spacing:-.02em;margin-top:8px;">Weekly project update</div>
+    <div style="font-size:22px;font-weight:600;color:#ffffff;letter-spacing:-.02em;margin-top:8px;">WFM AI Projects</div>
     <div style="font-size:13px;color:#9ec4ad;margin-top:3px;">${dateLabel}</div>
   </td></tr>
 
@@ -230,7 +230,7 @@ export async function buildDigest() {
 
   <tr><td style="background:#f7faf8;padding:16px 30px;border-top:1px solid #eef1ef;">
     <div style="font-size:11px;color:#8a978f;line-height:1.6;">
-      Sent from ECE Projects. Change the day, time or recipients in Settings.
+      Sent from WFM AI Projects. Change the day, time or recipients in Settings.
     </div>
   </td></tr>
 
@@ -242,8 +242,8 @@ export async function buildDigest() {
 
   const subject =
     openBlocks.length > 0
-      ? `Weekly project update — ${active.length} active, ${openBlocks.length} blocked`
-      : `Weekly project update — ${active.length} active`;
+      ? `WFM AI Projects — ${active.length} active, ${openBlocks.length} blocked`
+      : `WFM AI Projects — ${active.length} active`;
 
   return { subject, html, recipients: settings?.digest_recipients ?? [] };
 }

@@ -352,15 +352,19 @@ export async function notifyAssignment(taskId: string, memberId: string) {
       shots.filter((f) => f.url).map((f) => `\n${f.url}`).join("")
     : "";
 
-  await cliqDM(
-    who.email,
+  const text =
     `*${task.projects.title}* — you've been assigned: "${task.name}"` +
-      (task.due_date ? `\nDue ${task.due_date}.` : "") + shotLines +
-      (url
-        ? `\n\nMark it done here when you're finished:\n${url}`
-        : `\nI'll follow up here until it's closed.`)
-  );
-  await log("cliq_dm", `Assignment sent to ${who.name} — ${task.name}`, task.projects.id);
+    (task.due_date ? `\nDue ${task.due_date}.` : "") + shotLines +
+    (url
+      ? `\n\nMark it done here when you're finished:\n${url}`
+      : `\nI'll follow up here until it's closed.`);
+
+  await cliqDM(who.email, text);
+  await log("cliq_dm", `Assignment sent to ${who.name} — ${task.name}`, task.projects.id, {
+    to: who.name, email: who.email, project: task.projects.title,
+    trigger: "Assignment — they were added to this item",
+    items: [task.name], body: text,
+  });
 }
 
 /** Fired when someone is newly assigned to a milestone. */
@@ -381,13 +385,17 @@ export async function notifyMilestoneAssignment(milestoneId: string, memberId: s
       msShots.filter((f) => f.url).map((f) => `\n${f.url}`).join("")
     : "";
 
-  await cliqDM(
-    who.email,
+  const text =
     `*${ms.projects.title}* — milestone assigned to you: "${ms.name}"` +
-      (ms.due_date ? `\nDue ${ms.due_date}.` : "") + msShotLines +
-      (url ? `\n\nMark it complete here when it's done:\n${url}` : "")
-  );
-  await log("cliq_dm", `Milestone assigned to ${who.name} — ${ms.name}`, ms.projects.id);
+    (ms.due_date ? `\nDue ${ms.due_date}.` : "") + msShotLines +
+    (url ? `\n\nMark it complete here when it's done:\n${url}` : "");
+
+  await cliqDM(who.email, text);
+  await log("cliq_dm", `Milestone assigned to ${who.name} — ${ms.name}`, ms.projects.id, {
+    to: who.name, email: who.email, project: ms.projects.title,
+    trigger: "Assignment — they were added to this milestone",
+    items: [ms.name], body: text,
+  });
 }
 
 /** Someone has just been put on a roadblock. */
@@ -410,14 +418,18 @@ export async function notifyRoadblockOwner(roadblockId: string, memberId: string
       rbShots.filter((f) => f.url).map((f) => `\n${f.url}`).join("")
     : "";
 
-  await cliqDM(
-    who.email,
+  const text =
     `*${rb.projects.title}* — roadblock assigned to you: "${rb.title}"` +
-      (rb.detail ? `\n${rb.detail}` : "") +
-      (rb.target_date ? `\nTarget ${rb.target_date}.` : "") + rbShotLines +
-      (url ? `\n\nUpdate it here:\n${url}` : "")
-  );
-  await log("cliq_dm", `Roadblock assigned to ${who.name} — ${rb.title}`, rb.projects.id);
+    (rb.detail ? `\n${rb.detail}` : "") +
+    (rb.target_date ? `\nTarget ${rb.target_date}.` : "") + rbShotLines +
+    (url ? `\n\nUpdate it here:\n${url}` : "");
+
+  await cliqDM(who.email, text);
+  await log("cliq_dm", `Roadblock assigned to ${who.name} — ${rb.title}`, rb.projects.id, {
+    to: who.name, email: who.email, project: rb.projects.title,
+    trigger: "Assignment — they were added as an owner",
+    items: [rb.title], body: text,
+  });
 }
 
 /**

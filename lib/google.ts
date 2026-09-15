@@ -19,7 +19,7 @@ export async function sendMail(to: string[], subject: string, html: string, cc?:
   const from = process.env.GMAIL_SENDER!;
 
   const message = [
-    `From: ECE Projects <${from}>`,
+    `From: WFM AI Projects <${from}>`,
     `To: ${to.join(", ")}`,
     ...(cc && cc.length ? [`Cc: ${cc.join(", ")}`] : []),
     `Subject: =?utf-8?B?${Buffer.from(subject).toString("base64")}?=`,

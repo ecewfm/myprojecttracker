@@ -720,6 +720,37 @@ export default function ProjectPanel({
   const [taskFiles, setTaskFiles] = useState<File[]>([]);
   const [links, setLinks] = useState<any[]>([]);
   const att = useAttachments(project?.id, toast);
+  const [remindBusy, setRemindBusy] = useState(false);
+  const [remindWho, setRemindWho] = useState<
+    { people: { id: string; name: string; count: number }[]; total: number } | null
+  >(null);
+
+  /**
+   * Ask before sending. Nudging thirty people should be a decision, not a
+   * click — so this shows exactly who and how many items each.
+   */
+  async function previewRemind() {
+    try {
+      const r = await api<{ people: any[]; total: number }>(`/api/projects/${p!.id}/remind`);
+      if (!r.people.length) {
+        toast("Nobody has anything open on this project.", "err");
+        return;
+      }
+      setRemindWho(r);
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function sendRemind() {
+    setRemindBusy(true);
+    setRemindWho(null);
+    try {
+      const r = await api<{ sent: number; people: number }>(
+        `/api/projects/${p!.id}/remind`, { method: "POST" }
+      );
+      toast(`${r.sent} message${r.sent === 1 ? "" : "s"} sent to ${r.people} ${r.people === 1 ? "person" : "people"}.`);
+    } catch (e: any) { toast(e.message, "err"); }
+    setRemindBusy(false);
+  }
 
   useEffect(() => setP(project), [project]);
   useEffect(() => {
@@ -1146,7 +1177,32 @@ export default function ProjectPanel({
     <>
       <div className="scrim" onClick={onClose} />
       <div className="panel on" role="dialog" aria-modal="true" aria-label={p.title}>
-        <div className="panel-head">
+        {remindWho && (
+        <div className="rm-scrim" onClick={(e) => { if (e.target === e.currentTarget) setRemindWho(null); }}>
+          <div className="rm-modal">
+            <h4>Send reminders now?</h4>
+            <p>
+              Everyone below gets one message listing their open items on
+              <b> {p.title}</b>. This ignores the schedule and goes immediately.
+            </p>
+            <div className="rm-who">
+              {remindWho.people.map((w) => (
+                <div key={w.id}>
+                  <b>{w.name}</b> — {w.count} item{w.count === 1 ? "" : "s"}
+                </div>
+              ))}
+            </div>
+            <div className="rm-foot">
+              <button className="btn" onClick={() => setRemindWho(null)}>Cancel</button>
+              <button className="btn btn-solid" onClick={sendRemind}>
+                Send {remindWho.people.length} message{remindWho.people.length === 1 ? "" : "s"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="panel-head">
           <div className="panel-meta">
             <span>{p.ref}</span><span>·</span><span>{column?.label}</span>
             {p.priority && <span className="lab lab-priority">Priority</span>}
@@ -1164,6 +1220,11 @@ export default function ProjectPanel({
             ))}
           </div>
           <div className="panel-title">{p.title}</div>
+          <div className="panel-acts">
+            <button className="btn" onClick={previewRemind} disabled={remindBusy}>
+              {remindBusy ? "Sending…" : "Send reminders"}
+            </button>
+          </div>
           <button className="panel-x" onClick={onClose} aria-label="Close">✕</button>
         </div>
 

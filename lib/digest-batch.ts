@@ -66,8 +66,26 @@ export class DigestBatch {
         try {
           await cliqDM(who.email, text);
           sent++;
+          // The body goes into the log so the Activity page can show exactly
+          // what someone received, rather than only that they received it.
+          await log("cliq_dm", `Message to ${who.name} — ${items.length} item${items.length === 1 ? "" : "s"}`, projectId, {
+            to: who.name,
+            email: who.email,
+            project: project.title,
+            trigger: headline,
+            items: items.map((i) => i.name),
+            body: text,
+          });
         } catch (e: any) {
-          await log("cliq_error", `Digest DM to ${who.email} failed: ${e.message}`, projectId);
+          await log("cliq_error", `DM to ${who.name} failed`, projectId, {
+            to: who.name,
+            email: who.email,
+            project: project.title,
+            trigger: headline,
+            items: items.map((i) => i.name),
+            error: e.message,
+            body: text,
+          });
         }
       }
 
