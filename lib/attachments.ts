@@ -205,3 +205,49 @@ export async function claimUnannounced(owner: Owner): Promise<Attachment[]> {
 
   return withUrls(rows);
 }
+
+/**
+ * Unannounced images for many items at once.
+ *
+ * The per-item version was being called inside the reminder loop, which meant
+ * two round trips for every open item on every run — a few hundred sequential
+ * queries on a busy board, enough to run the function past its time limit.
+ * This does the same work in two queries whatever the size of the list.
+ */
+export async function claimUnannouncedFor(
+  kind: Owner["kind"],
+  ids: string[]
+): Promise<Map<string, Attachment[]>> {
+  const out = new Map<string, Attachment[]>();
+  if (!ids.length) return out;
+
+  const col = kind === "milestone" ? "milestone_id"
+    : kind === "task" ? "task_id"
+    : "roadblock_id";
+
+  const { data } = await db
+    .from("attachments")
+    .select(`id, path, filename, mime, bytes, uploaded_by, created_at, ${col}`)
+    .in(col, ids)
+    .is("announced_at", null)
+    .order("created_at");
+
+  const rows = data ?? [];
+  if (!rows.length) return out;
+
+  const signed = await withUrls(rows);
+  const byId = new Map(signed.map((a) => [a.id, a]));
+
+  for (const r of rows as any[]) {
+    const key = r[col];
+    const a = byId.get(r.id);
+    if (!key || !a) continue;
+    out.set(key, [...(out.get(key) ?? []), a]);
+  }
+
+  await db.from("attachments")
+    .update({ announced_at: new Date().toISOString() })
+    .in("id", rows.map((r: any) => r.id));
+
+  return out;
+}

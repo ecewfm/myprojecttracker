@@ -60,7 +60,12 @@ function Inner() {
             : "Nothing to send — no open item has both an assignee and a due date."
       );
       await load();
-    } catch (e: any) { toast(e.message, "err"); }
+    } catch (e: any) {
+      // Show it on the page too — a toast disappears before it can be read
+      // or copied, and this is the message that explains the failure.
+      setRanResult(e.message ?? "The run failed.");
+      toast(e.message, "err");
+    }
     setRunning(false);
   }
   const [recipients, setRecipients] = useState("");
@@ -203,7 +208,11 @@ function Inner() {
               <button className="btn" onClick={runNow} disabled={running}>
                 {running ? "Running…" : "Send today's reminders now"}
               </button>
-              {ranResult && <span style={{ fontSize: 11.5, color: "var(--ink-2)" }}>{ranResult}</span>}
+              {ranResult && (
+                <span style={{ fontSize: 11.5, color: "var(--ink-2)", lineHeight: 1.5 }}>
+                  {ranResult}
+                </span>
+              )}
             </div>
 
             <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: -6, marginBottom: 16 }}>

@@ -2,7 +2,7 @@ import { db, log } from "./supabase";
 import { cliqDM, cliqChannel } from "./zoho";
 import { ensureShareUrl } from "./ensure-link";
 import { DigestBatch } from "./digest-batch";
-import { claimUnannounced } from "./attachments";
+import { claimUnannounced, claimUnannouncedFor } from "./attachments";
 import { daysUntilInZone, isWeekdayInZone, zoneHour, zoneToday } from "./tz";
 
 // Day maths runs in the app's timezone (see lib/tz.ts), so "due today"
@@ -217,6 +217,12 @@ export async function runReminders() {
       )
     `);
 
+  // One query for every task's new images, rather than one per task.
+  const taskShots = await claimUnannouncedFor(
+    "task",
+    [...new Set((taskRows ?? []).map((r: any) => r.tasks?.id).filter(Boolean))]
+  );
+
   for (const row of (taskRows ?? []) as any[]) {
     const t = row.tasks, who = row.team_members;
     if (!t || t.done || !who?.email) continue;
@@ -233,7 +239,7 @@ export async function runReminders() {
         kind: "task",
         name: t.name,
         due: t.due_date,
-        images: await claimUnannounced({ kind: "task", id: t.id }),
+        images: taskShots.get(t.id) ?? [],
       });
       await db.from("task_assignees")
         .update({ last_nudge_at: new Date().toISOString(), nudge_count: row.nudge_count + 1 })
@@ -265,6 +271,11 @@ export async function runReminders() {
       )
     `);
 
+  const msShotsAll = await claimUnannouncedFor(
+    "milestone",
+    [...new Set((msRows ?? []).map((r: any) => r.milestones?.id).filter(Boolean))]
+  );
+
   for (const row of (msRows ?? []) as any[]) {
     const m = row.milestones, who = row.team_members;
     if (!m || m.done || !m.due_date || !who?.email) continue;
@@ -280,7 +291,7 @@ export async function runReminders() {
         kind: "milestone",
         name: m.name,
         due: m.due_date,
-        images: await claimUnannounced({ kind: "milestone", id: m.id }),
+        images: msShotsAll.get(m.id) ?? [],
       });
       await db.from("milestone_assignees")
         .update({ last_nudge_at: new Date().toISOString(), nudge_count: row.nudge_count + 1 })
