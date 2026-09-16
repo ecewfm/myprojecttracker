@@ -51,6 +51,7 @@ export async function api<T = any>(
 const NAV = [
   { href: "/", label: "Board" },
   { href: "/timeline", label: "Timeline" },
+  { href: "/items", label: "All items" },
   { href: "/deadlines", label: "Deadlines" },
   { href: "/activity", label: "Activity" },
   { href: "/roadblocks", label: "Roadblocks" },
