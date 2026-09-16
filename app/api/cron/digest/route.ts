@@ -12,7 +12,13 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "unauthorised" }, { status: 401 });
   }
 
-  const { data: s } = await db.from("settings").select("digest_day, digest_hour").eq("id", 1).single();
+  const { data: s } = await db.from("settings")
+    .select("digest_day, digest_hour, digest_mode").eq("id", 1).single();
+
+  // Manual mode: the weekly email only goes when you press Send in the preview.
+  if (s?.digest_mode === "manual") {
+    return NextResponse.json({ skipped: "digest is set to manual sending" });
+  }
   const localDay = zoneWeekday(); // 1=Mon … 7=Sun, in the app timezone
   const localHour = zoneHour();
 

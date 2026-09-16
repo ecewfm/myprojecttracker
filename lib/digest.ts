@@ -95,23 +95,50 @@ export async function buildDigest() {
   const projectRows = shown.map((p, i) => {
     const blocked = p.roadblocks.some((r) => r.status !== "resolved");
     const late = !!p.due_date && p.due_date < today && p.percent < 100;
-    const meta = [
-      p.owner?.name,
-      p.due_date ? `due ${formatDateInZone(p.due_date)}` : null,
-    ].filter(Boolean).join(" &middot; ");
+    const overdue = p.tasks.filter((t) => !t.done && t.due_date && t.due_date < today).length
+      + p.milestones.flatMap((m) => [m, ...(m.children ?? [])])
+          .filter((m) => !m.done && m.due_date && m.due_date < today).length;
+    const openCount = p.tasks.filter((t) => !t.done).length
+      + p.milestones.flatMap((m) => [m, ...(m.children ?? [])]).filter((m) => !m.done).length;
+    const others = p.members.filter((m) => m.id !== p.owner?.id);
+
+    const chip = (text: string, tone: "red" | "grey") =>
+      `<span style="display:inline-block;font-size:10px;font-weight:700;letter-spacing:.04em;` +
+      (tone === "red"
+        ? `color:#8c2f26;background:#fbeae8;border:1px solid #edc4bf;`
+        : `color:#3d5249;background:#eef1ef;border:1px solid #e2e8e4;`) +
+      `border-radius:4px;padding:2px 7px;margin-right:5px;">${text}</span>`;
 
     return `
-      <tr><td style="padding:11px 0;${i === shown.length - 1 ? "" : "border-bottom:1px solid #eef1ef;"}">
+      <tr><td style="padding:14px 0;${i === shown.length - 1 ? "" : "border-bottom:1px solid #eef1ef;"}">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
           <tr>
-            <td valign="middle" style="font-size:13.5px;font-weight:600;color:#16241d;">
-              ${esc(p.title)}
-              ${p.priority ? chip("Priority", "#96540c", "#fdf0e0", "#f2d3ab") : ""}
-              ${blocked ? chip("Blocked", "#8c2f26", "#fbeae8", "#edc4bf") : ""}
-              ${late && !blocked ? chip("Late", "#8c2f26", "#fbeae8", "#edc4bf") : ""}
-              ${meta ? `<div style="font-size:11px;color:#6b8177;font-weight:400;margin-top:3px;">${esc(meta)}</div>` : ""}
+            <td valign="top">
+              <div style="font-size:13.5px;font-weight:600;color:#16241d;">
+                ${esc(p.title)}
+                ${p.priority ? `<span style="display:inline-block;font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#96540c;background:#fdf0e0;border:1px solid #f2d3ab;border-radius:4px;padding:2px 6px;margin-left:6px;">Priority</span>` : ""}
+              </div>
+              <div style="font-size:11px;color:#6b8177;margin-top:3px;">
+                Owner: <b style="color:#3d5249;">${esc(p.owner?.name ?? "Unassigned")}</b>
+                ${p.due_date ? ` &middot; due ${formatDateInZone(p.due_date)}` : ""}
+              </div>
+              ${others.length
+                ? `<div style="font-size:11px;color:#6b8177;margin-top:2px;">With: ${esc(others.map((m) => m.name).join(", "))}</div>`
+                : ""}
+              ${p.description
+                ? `<div style="font-size:12px;color:#3d5249;margin-top:7px;line-height:1.55;">${esc(p.description)}</div>`
+                : ""}
+              ${p.progress_line
+                ? `<div style="font-size:12px;color:#3d5249;margin-top:7px;line-height:1.6;padding:10px 12px;background:#f4f8f5;border-left:3px solid #3f7a5c;border-radius:0 8px 8px 0;">${esc(p.progress_line)}</div>`
+                : ""}
+              <div style="margin-top:8px;">
+                ${overdue ? chip(`${overdue} OVERDUE`, "red") : ""}
+                ${blocked ? chip(`${p.roadblocks.filter((r) => r.status !== "resolved").length} BLOCKED`, "red") : ""}
+                ${late && !blocked && !overdue ? chip("PAST TARGET", "red") : ""}
+                ${chip(`${p.percent}% &middot; ${openCount} OPEN`, "grey")}
+              </div>
             </td>
-            <td width="150" align="right" valign="middle">${bar(p.percent, blocked)}</td>
+            <td width="130" align="right" valign="top">${bar(p.percent, blocked)}</td>
           </tr>
         </table>
       </td></tr>`;

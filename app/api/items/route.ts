@@ -21,10 +21,17 @@ export interface TableItem {
 export interface TableProject {
   id: string; ref: string; title: string;
   owner: string | null;
+  /** Everyone on the project who isn't the owner. */
+  people: string[];
   due: string | null;
   percent: number;
   priority: boolean;
   status: string;
+  description: string;
+  progressLine: string;
+  progressAt: string | null;
+  /** True once you've reworded the line — a refresh then leaves it alone. */
+  progressMine: boolean;
 }
 
 /**
@@ -42,7 +49,12 @@ export async function GET() {
   const [{ data: projects }, { data: milestones }, { data: tasks }, { data: roadblocks }, { data: files }] =
     await Promise.all([
       db.from("projects")
-        .select("id, ref, title, status, due_date, priority, owner:team_members!projects_owner_id_fkey ( name )")
+        .select(`
+          id, ref, title, status, due_date, priority,
+          description, progress_line, progress_line_at, progress_line_mine,
+          owner:team_members!projects_owner_id_fkey ( name ),
+          project_members ( team_members ( name ) )
+        `)
         .eq("archived", false)
         .order("created_at"),
 
@@ -133,15 +145,25 @@ export async function GET() {
       return sum + kids.filter((c: any) => c.done).length / kids.length;
     }, 0);
 
+    const owner = p.owner?.name ?? null;
+
     return {
       id: p.id,
       ref: p.ref,
       title: p.title,
-      owner: p.owner?.name ?? null,
+      owner,
+      // Owner is shown separately, so they don't appear twice.
+      people: (p.project_members ?? [])
+        .map((m: any) => m.team_members?.name)
+        .filter((n: string) => n && n !== owner),
       due: p.due_date,
       percent: top.length ? Math.round((weight / top.length) * 100) : 0,
       priority: p.priority,
       status: p.status,
+      description: p.description ?? "",
+      progressLine: p.progress_line ?? "",
+      progressAt: p.progress_line_at,
+      progressMine: !!p.progress_line_mine,
     };
   });
 

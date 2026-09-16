@@ -49,6 +49,11 @@ export interface Project {
   milestones: Milestone[];
   tasks: Task[]; roadblocks: Roadblock[];
   created_at: string;
+  description: string;
+  /** One-line read shown in All items and the weekly email. */
+  progress_line: string;
+  progress_line_at: string | null;
+  progress_line_mine: boolean;
   percent: number; ai_summary: string | null; ai_ran_at: string | null;
   reminders_on: boolean;
   cliq_channel: string | null;

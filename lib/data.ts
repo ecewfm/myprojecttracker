@@ -3,6 +3,7 @@ import type { Project, Member, ProjectStatus } from "./types";
 
 const SELECT = `
   id, ref, title, status, phase, due_date, priority, shared, labels, created_at,
+  description, progress_line, progress_line_at, progress_line_mine,
   ai_summary, ai_ran_at, reminders_on,
   cliq_channel, email_enabled, email_day, email_hour, email_to, email_cc, email_subject,
   owner:team_members!projects_owner_id_fkey ( id, name, email, active, job_position, account, site ),
@@ -112,6 +113,10 @@ function shape(row: any): Project {
         return new Date(b.raised_at).getTime() - new Date(a.raised_at).getTime();
       }),
     created_at: row.created_at,
+    description: row.description ?? "",
+    progress_line: row.progress_line ?? "",
+    progress_line_at: row.progress_line_at,
+    progress_line_mine: !!row.progress_line_mine,
     percent: pct(milestones),
     ai_summary: row.ai_summary,
     ai_ran_at: row.ai_ran_at,
@@ -253,6 +258,10 @@ export async function getProjectSummaries(today: string): Promise<ProjectSummary
       status: row.status,
       due_date: row.due_date,
       created_at: row.created_at,
+    description: row.description ?? "",
+    progress_line: row.progress_line ?? "",
+    progress_line_at: row.progress_line_at,
+    progress_line_mine: !!row.progress_line_mine,
       priority: row.priority,
       shared: row.shared,
       labels: row.labels ?? [],

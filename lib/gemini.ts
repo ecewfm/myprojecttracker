@@ -2,7 +2,8 @@ import { zoneToday, TZ } from "./tz";
 
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
-async function generate(prompt: string): Promise<string> {
+/** One prompt in, the model's text out. Shared by everything that asks. */
+export async function generate(prompt: string): Promise<string> {
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`,
     {

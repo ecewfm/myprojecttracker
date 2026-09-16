@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo, Fragment } from "react";
 import { TopBar, ToastHost, api, useToast } from "@/components/Shell";
 import ProjectPanel from "@/components/ProjectPanel";
 import type { Project, Member } from "@/lib/types";
+import { formatInZone } from "@/lib/tz";
 
 interface Item {
   id: string; projectId: string;
@@ -14,8 +15,16 @@ interface Item {
 }
 interface Proj {
   id: string; ref: string; title: string;
-  owner: string | null; due: string | null;
+  owner: string | null;
+  /** Everyone on the project who isn't the owner. */
+  people: string[];
+  due: string | null;
   percent: number; priority: boolean; status: string;
+  description: string;
+  progressLine: string;
+  progressAt: string | null;
+  /** True once you've reworded the line, so a refresh leaves it alone. */
+  progressMine: boolean;
 }
 
 const TYPE_LABEL = {
@@ -29,6 +38,54 @@ const dayGap = (d: string | null, today: string) =>
 function relative(gap: number | null) {
   if (gap === null) return "";
   return gap < 0 ? `${Math.abs(gap)}d over` : gap === 0 ? "today" : `in ${gap}d`;
+}
+
+/**
+ * A cell you can type into. Click to edit, click away to save.
+ *
+ * Kept uncontrolled while editing so a save round trip can't yank the text
+ * out from under someone mid-sentence.
+ */
+function EditableCell({
+  value, placeholder, mine, onSave,
+}: {
+  value: string;
+  placeholder: string;
+  mine: boolean;
+  onSave: (v: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => { if (!editing) setDraft(value); }, [value, editing]);
+
+  if (editing) {
+    return (
+      <div className="it-ed editing">
+        <textarea
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => {
+            setEditing(false);
+            if (draft.trim() !== value) onSave(draft.trim());
+          }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`it-ed ${value ? "" : "empty"}`}
+      role="button" tabIndex={0}
+      onClick={() => setEditing(true)}
+      onKeyDown={(e) => { if (e.key === "Enter") setEditing(true); }}
+    >
+      {value || placeholder}
+      {mine && value && <span className="it-mine">yours</span>}
+    </div>
+  );
 }
 
 function Inner() {
@@ -48,6 +105,74 @@ function Inner() {
 
   const [asking, setAsking] = useState<{ project: Proj; people: { name: string; count: number }[] } | null>(null);
   const [sending, setSending] = useState(false);
+  const [busyLine, setBusyLine] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [mail, setMail] = useState<{ subject: string; html: string } | null>(null);
+  const [mailBusy, setMailBusy] = useState(false);
+  const [mode, setMode] = useState<"auto" | "manual">("auto");
+
+  /** Save a description or a reworded line. The row updates as you type away. */
+  async function saveField(id: string, patch: { description?: string; progressLine?: string }) {
+    setProjects((prev) => prev.map((p) => p.id === id ? {
+      ...p,
+      ...(patch.description !== undefined ? { description: patch.description } : {}),
+      ...(patch.progressLine !== undefined
+        ? { progressLine: patch.progressLine, progressMine: true } : {}),
+    } : p));
+    try {
+      await api(`/api/projects/${id}/progress-line`, { method: "PATCH", body: patch });
+    } catch (e: any) { toast(e.message, "err"); await load(); }
+  }
+
+  async function rewrite(id: string) {
+    setBusyLine(id);
+    try {
+      const r = await api<{ progressLine: string }>(
+        `/api/projects/${id}/progress-line`, { method: "POST" }
+      );
+      setProjects((prev) => prev.map((p) => p.id === id
+        ? { ...p, progressLine: r.progressLine, progressAt: new Date().toISOString(), progressMine: false }
+        : p));
+    } catch (e: any) { toast(e.message, "err"); }
+    setBusyLine(null);
+  }
+
+  async function refreshAll() {
+    setRefreshing(true);
+    try {
+      const r = await api<{ written: number; skipped: number }>(
+        "/api/progress-lines", { method: "POST" }
+      );
+      toast(
+        `${r.written} line${r.written === 1 ? "" : "s"} rewritten` +
+        (r.skipped ? `, ${r.skipped} left as yours.` : ".")
+      );
+      await load();
+    } catch (e: any) { toast(e.message, "err"); }
+    setRefreshing(false);
+  }
+
+  async function previewMail() {
+    setMailBusy(true);
+    try {
+      setMail(await api<{ subject: string; html: string }>("/api/digest/preview"));
+    } catch (e: any) { toast(e.message, "err"); }
+    setMailBusy(false);
+  }
+
+  async function sendMailNow() {
+    setMail(null);
+    try {
+      const r = await api<{ sent: number }>("/api/digest/preview", { method: "POST" });
+      toast(`Sent to ${r.sent} recipient${r.sent === 1 ? "" : "s"}.`);
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  async function setCadence(v: "auto" | "manual") {
+    setMode(v);
+    try { await api("/api/settings", { method: "PATCH", body: { digest_mode: v } }); }
+    catch (e: any) { toast(e.message, "err"); }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -57,6 +182,10 @@ function Inner() {
       ]);
       setProjects(data.projects);
       setItems(data.items);
+      try {
+        const st = await api<{ digest_mode?: string }>("/api/settings");
+        setMode(st.digest_mode === "manual" ? "manual" : "auto");
+      } catch { /* the table still works without it */ }
       setToday(data.today);
       setMembers(team);
     } catch (e: any) { toast(e.message, "err"); }
@@ -166,6 +295,12 @@ function Inner() {
                 Expand all
               </button>
               <button className="btn" onClick={() => setOpenIds(new Set())}>Collapse all</button>
+              <button className="btn" onClick={refreshAll} disabled={refreshing}>
+                {refreshing ? "Writing…" : "Refresh AI"}
+              </button>
+              <button className="btn btn-solid" onClick={previewMail} disabled={mailBusy}>
+                {mailBusy ? "Building…" : "Weekly email"}
+              </button>
             </div>
           </div>
 
@@ -202,19 +337,22 @@ function Inner() {
               <table className="it-table">
                 <thead>
                   <tr>
-                    <th style={{ minWidth: 300 }}>Project / item</th>
-                    <th style={{ width: 130 }}>Progress</th>
-                    <th style={{ width: 190 }}>Assigned to</th>
+                    <th className="it-stick" style={{ minWidth: 250 }}>Project / item</th>
+                    <th style={{ minWidth: 230 }}>Description</th>
+                    <th style={{ minWidth: 250 }}>Project progress</th>
+                    <th style={{ minWidth: 160 }}>Owner</th>
+                    <th style={{ minWidth: 180 }}>People involved</th>
+                    <th style={{ width: 120 }}>Complete</th>
                     <th style={{ width: 110 }}>Due</th>
                     <th className="it-num">Open</th>
-                    <th className="it-num">Overdue</th>
+                    <th className="it-num">Late</th>
                     <th className="it-num">Blocked</th>
-                    <th style={{ width: 130 }} />
+                    <th style={{ width: 126 }} />
                   </tr>
                 </thead>
                 <tbody>
                   {groups.length === 0 && (
-                    <tr><td colSpan={8} className="empty" style={{ padding: 36 }}>
+                    <tr><td colSpan={11} className="empty" style={{ padding: 36 }}>
                       Nothing matches those filters.
                     </td></tr>
                   )}
@@ -229,7 +367,7 @@ function Inner() {
                           className={`it-proj ${isOpen ? "open" : ""}`}
                           onClick={() => toggle(p.id)}
                         >
-                          <td>
+                          <td className="it-stick">
                             <div className="it-pname">
                               <span className="it-car">▸</span>
                               <div>
@@ -237,10 +375,55 @@ function Inner() {
                                   {p.title}
                                   {p.priority && <span className="lab lab-priority">Priority</span>}
                                 </div>
-                                <div className="it-ps">{p.ref}{p.owner ? ` · ${p.owner}` : ""}</div>
+                                <div className="it-ps">{p.ref}</div>
                               </div>
                             </div>
                           </td>
+
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <EditableCell
+                              value={p.description}
+                              placeholder="Add a description…"
+                              mine={!!p.description}
+                              onSave={(v) => saveField(p.id, { description: v })}
+                            />
+                          </td>
+
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <div className="it-ai">
+                              <div style={{ flex: 1 }}>
+                                <EditableCell
+                                  value={p.progressLine}
+                                  placeholder="No read yet — press ↻"
+                                  mine={p.progressMine}
+                                  onSave={(v) => saveField(p.id, { progressLine: v })}
+                                />
+                                <div className="it-aiwhen">
+                                  {p.progressMine
+                                    ? "your wording — a refresh won't touch it"
+                                    : p.progressAt
+                                      ? `Gemini · ${formatInZone(p.progressAt)}`
+                                      : "not written yet"}
+                                </div>
+                              </div>
+                              <button
+                                className="it-rf"
+                                title="Rewrite this line from the project's current state"
+                                disabled={busyLine === p.id}
+                                onClick={(e) => { e.stopPropagation(); rewrite(p.id); }}
+                              >{busyLine === p.id ? "…" : "↻"}</button>
+                            </div>
+                          </td>
+
+                          <td className="it-who">
+                            {p.owner ?? <span className="it-none">Unassigned</span>}
+                          </td>
+                          <td className="it-who">
+                            {p.people.length
+                              ? p.people.join(", ")
+                              : <span className="it-none-q">nobody else</span>}
+                          </td>
+
                           <td>
                             <div className="it-prog">
                               <div className="it-ptrack">
@@ -252,7 +435,6 @@ function Inner() {
                               <span className="it-pn">{p.percent}%</span>
                             </div>
                           </td>
-                          <td className="it-who">{p.owner ?? <span className="it-none">Unassigned</span>}</td>
                           <td className={`it-due ${gap !== null && gap < 0 ? "late" : gap !== null && gap <= 7 ? "soon" : ""}`}>
                             {p.due ? <>{p.due}<div className="it-sub2">{relative(gap)}</div></> : "—"}
                           </td>
@@ -279,29 +461,29 @@ function Inner() {
                               className={`it-item ${i.done ? "done" : ""}`}
                               onClick={() => openProject(p.id)}
                             >
-                              <td className={`it-iname ${i.type === "sub" ? "sub" : ""}`}>
-                                {i.name}
-                                {i.parent && <span className="it-ipar">under {i.parent}</span>}
+                              {/* Type rides beside the name so the columns
+                                  still line up with the project row above. */}
+                              <td className={`it-stick it-iname ${i.type === "sub" ? "sub" : ""}`}>
+                                <span className={`it-t it-t-${i.type}`}>{TYPE_LABEL[i.type]}</span>
+                                <span style={{ marginLeft: 7 }}>{i.name}</span>
                               </td>
-                              <td><span className={`it-t it-t-${i.type}`}>{TYPE_LABEL[i.type]}</span></td>
+                              <td />
+                              <td />
+                              <td />
                               <td className="it-who">
                                 {i.assignees.length
                                   ? i.assignees.join(", ")
                                   : <span className="it-none">Nobody</span>}
                               </td>
+                              <td />
                               <td className={`it-due ${i.done ? "" : isLate ? "late" : g !== null && g <= 3 ? "soon" : ""}`}>
                                 {i.due
                                   ? <>{i.due}{!i.done && <div className="it-sub2">{relative(g)}</div>}</>
                                   : <span className="it-none-q">—</span>}
                               </td>
-                              <td className="it-num" colSpan={2}>
+                              <td className="it-num" colSpan={3}>
                                 <span className={`it-st ${i.done ? "done" : isLate ? "late" : "open"}`}>
                                   {i.done ? "Done" : isLate ? "Overdue" : "Open"}
-                                </span>
-                              </td>
-                              <td className="it-num">
-                                <span className="it-mk">
-                                  {i.hasNote ? "📝" : ""}{i.hasImages ? "🖼" : ""}
                                 </span>
                               </td>
                               <td />
@@ -351,6 +533,43 @@ function Inner() {
                   ? `Send ${asking.people.length} message${asking.people.length === 1 ? "" : "s"}`
                   : "Nothing to send"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mail && (
+        <div className="mail-scrim" onClick={(e) => { if (e.target === e.currentTarget) setMail(null); }}>
+          <div className="mail-box">
+            <div className="mail-bar">
+              <div>
+                <div className="mail-t1">{mail.subject}</div>
+                <div className="mail-t2">This is a preview — nothing has been sent.</div>
+              </div>
+              <div style={{ display: "flex", gap: 7 }}>
+                <button className="btn" onClick={() => setMail(null)}>Cancel</button>
+                <button className="btn btn-solid" onClick={sendMailNow}>Send now</button>
+              </div>
+            </div>
+
+            <div className="mail-body" dangerouslySetInnerHTML={{ __html: mail.html }} />
+
+            <div className="mail-set">
+              <b>Sending:</b>
+              <label>
+                <input
+                  type="radio" name="cad" checked={mode === "auto"}
+                  onChange={() => setCadence("auto")}
+                />
+                Automatically, on the schedule in Settings
+              </label>
+              <label>
+                <input
+                  type="radio" name="cad" checked={mode === "manual"}
+                  onChange={() => setCadence("manual")}
+                />
+                Manual only — nothing sends unless I press Send
+              </label>
             </div>
           </div>
         </div>
