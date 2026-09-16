@@ -3,7 +3,7 @@ import { cliqDM, cliqChannel } from "./zoho";
 import { ensureShareUrl } from "./ensure-link";
 import { DigestBatch } from "./digest-batch";
 import { claimUnannounced } from "./attachments";
-import { daysUntilInZone, isWeekdayInZone, zoneHour } from "./tz";
+import { daysUntilInZone, isWeekdayInZone, zoneHour, zoneToday } from "./tz";
 
 // Day maths runs in the app's timezone (see lib/tz.ts), so "due today"
 // and "weekdays only" mean what they should wherever the server runs.
@@ -110,18 +110,71 @@ export async function runReminders() {
   //
   // Anything not escalating is therefore messaged exactly once a day.
   const hour = zoneHour();
+  const today = zoneToday();
   const primaryHour = settings.dm_start_hour ?? 9;
   const secondHour = settings.dm_end_hour ?? 16;
-  const isPrimary = hour === primaryHour;
-  const isSecond = hour === secondHour && secondHour !== primaryHour;
+
+  /**
+   * When to send.
+   *
+   * This used to require the local hour to equal the configured hour exactly.
+   * That only works if the cron really fires every hour — and on Vercel's
+   * Hobby plan it doesn't: it runs roughly once a day at a time of its
+   * choosing. A run at 08:54 against a 09:00 setting never matched, so
+   * reminders silently never went out.
+   *
+   * Now a run asks whether today's send has already happened. It fires at or
+   * after the configured hour, and if a whole day has gone by without one it
+   * fires regardless — so a cron that lands before the hour still gets the
+   * reminders out rather than skipping the day entirely.
+   */
+  const primaryDone = settings.last_reminder_run === today;
+  const secondDone = settings.last_second_run === today;
+
+  /**
+   * How often is this cron actually running?
+   *
+   * The schedule says hourly, but Vercel's Hobby plan runs cron jobs about
+   * once a day at a time it picks — which is why the digest landed at 08:44
+   * one morning and 08:54 the next. Rather than assume, measure: every
+   * invocation stamps the clock, and the gap since the last one says which
+   * world we're in.
+   *
+   * Hourly  — wait for the configured hour, as intended.
+   * Daily   — this is the only run we'll get, so take it. A reminder an hour
+   *           off the requested time beats no reminder at all.
+   */
+  const sinceLastCron = settings.last_cron_at ? hoursSince(settings.last_cron_at) : 99;
+  const cronIsHourly = sinceLastCron <= 2;
+
+  await db.from("settings")
+    .update({ last_cron_at: new Date().toISOString() })
+    .eq("id", 1);
+
+  const isPrimary = !primaryDone && (cronIsHourly ? hour >= primaryHour : true);
+  const isSecond =
+    !isPrimary &&
+    primaryDone && !secondDone &&
+    secondHour !== primaryHour &&
+    cronIsHourly && hour >= secondHour;
 
   if (!isPrimary && !isSecond) {
-    return {
-      sent: 0,
-      skipped: `not a send time (now ${hour}:00; sends at ${primaryHour}:00` +
-        (secondHour !== primaryHour ? ` and ${secondHour}:00 for escalated items` : "") + ")",
-    };
+    const why = primaryDone && secondDone
+      ? `already sent today (both passes done)`
+      : primaryDone
+        ? `today's main send is done; the ${secondHour}:00 pass waits until then (now ${hour}:00)`
+        : `waiting for ${primaryHour}:00 (now ${hour}:00)`;
+
+    // Logged, so a day with no reminders shows a reason rather than silence.
+    await log("reminder_skipped", `No reminders — ${why}`);
+    return { sent: 0, skipped: why };
   }
+
+  // Claim the slot before sending. If the run dies part-way it won't start
+  // again from the top an hour later and double-message everyone.
+  await db.from("settings")
+    .update(isPrimary ? { last_reminder_run: today } : { last_second_run: today })
+    .eq("id", 1);
 
   /** Is this item on the escalated cadence right now? */
   const escalating = (daysLeft: number | null, isRoadblock: boolean) =>
@@ -273,7 +326,15 @@ export async function runReminders() {
   }
 
   // Send the collected reminders — one message per person per project.
+  const people = batch.size;
   sent += await batch.flush("still open for you");
+
+  await log(
+    "reminder_run",
+    sent
+      ? `Daily reminders — ${sent} message(s) to ${people} person(s)`
+      : `Reminder run finished with nothing to send — no open item has both an assignee and a due date`
+  );
 
   return { sent, failures };
 }

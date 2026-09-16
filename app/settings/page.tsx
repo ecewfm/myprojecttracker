@@ -41,6 +41,28 @@ function Inner() {
   const toast = useToast();
   const [s, setS] = useState<Settings | null>(null);
   const [activity, setActivity] = useState<any[]>([]);
+  const [running, setRunning] = useState(false);
+  const [ranResult, setRanResult] = useState("");
+
+  /** Run the reminder pass immediately and say plainly what it did. */
+  async function runNow() {
+    setRunning(true);
+    setRanResult("");
+    try {
+      const r = await api<{ sent: number; skipped?: string; failures?: string[] }>(
+        "/api/reminders/run", { method: "POST" }
+      );
+      setRanResult(
+        r.sent
+          ? `${r.sent} message${r.sent === 1 ? "" : "s"} sent.`
+          : r.skipped
+            ? `Nothing sent — ${r.skipped}.`
+            : "Nothing to send — no open item has both an assignee and a due date."
+      );
+      await load();
+    } catch (e: any) { toast(e.message, "err"); }
+    setRunning(false);
+  }
   const [recipients, setRecipients] = useState("");
   const [analysisPrompt, setAnalysisPrompt] = useState("");
   const [digestPrompt, setDigestPrompt] = useState("");
@@ -177,6 +199,13 @@ function Inner() {
                 </select>
               </div>
             </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+              <button className="btn" onClick={runNow} disabled={running}>
+                {running ? "Running…" : "Send today's reminders now"}
+              </button>
+              {ranResult && <span style={{ fontSize: 11.5, color: "var(--ink-2)" }}>{ranResult}</span>}
+            </div>
+
             <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: -6, marginBottom: 16 }}>
               Everything open is messaged once at the first time, {zoneLabel()}. The second
               time only picks up items inside the escalation window above, so nothing on a
