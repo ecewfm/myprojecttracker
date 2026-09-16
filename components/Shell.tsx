@@ -52,6 +52,7 @@ const NAV = [
   { href: "/", label: "Board" },
   { href: "/timeline", label: "Timeline" },
   { href: "/items", label: "All items" },
+  { href: "/weekly", label: "Weekly update" },
   { href: "/deadlines", label: "Deadlines" },
   { href: "/activity", label: "Activity" },
   { href: "/roadblocks", label: "Roadblocks" },

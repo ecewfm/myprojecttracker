@@ -13,7 +13,7 @@ export async function GET(req: Request) {
   }
 
   const { data: s } = await db.from("settings")
-    .select("digest_day, digest_hour, digest_mode").eq("id", 1).single();
+    .select("digest_day, digest_hour, digest_mode, digest_shape").eq("id", 1).single();
 
   // Manual mode: the weekly email only goes when you press Send in the preview.
   if (s?.digest_mode === "manual") {
