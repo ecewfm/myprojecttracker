@@ -46,7 +46,7 @@ export async function GET() {
 
   const today = zoneToday();
 
-  const [{ data: projects }, { data: milestones }, { data: tasks }, { data: roadblocks }, { data: files }] =
+  const [pRes, mRes, tRes, rRes, fRes] =
     await Promise.all([
       db.from("projects")
         .select(`
@@ -74,6 +74,30 @@ export async function GET() {
       // fetching signed URLs it won't display.
       db.from("attachments").select("milestone_id, task_id, roadblock_id"),
     ]);
+
+  // A failed query used to land here as an empty array, so a missing column
+  // looked exactly like an empty board. Say what actually went wrong.
+  const failed = [
+    ["projects", pRes.error], ["milestones", mRes.error],
+    ["tasks", tRes.error], ["roadblocks", rRes.error], ["attachments", fRes.error],
+  ].find(([, e]) => e);
+
+  if (failed) {
+    const [table, err] = failed as [string, { message: string }];
+    return NextResponse.json({
+      error:
+        `Couldn't read ${table}: ${err.message}` +
+        (/column .* does not exist/i.test(err.message)
+          ? " — migration-012.sql hasn't been run yet."
+          : ""),
+    }, { status: 400 });
+  }
+
+  const projects = pRes.data;
+  const milestones = mRes.data;
+  const tasks = tRes.data;
+  const roadblocks = rRes.data;
+  const files = fRes.data;
 
   const withImages = new Set<string>();
   for (const f of files ?? []) {

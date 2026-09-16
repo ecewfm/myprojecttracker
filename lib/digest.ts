@@ -92,57 +92,86 @@ export async function buildDigest() {
   const shown = listed.slice(0, 12);
   const hidden = listed.length - shown.length;
 
+  // ── the table ──
+  // One row per project, sorted worst first. Everything inline, because
+  // Outlook ignores a <style> block and most of what's in it.
+  const TH =
+    "font-size:9px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;" +
+    "color:#8a978f;padding:0 6px 7px;border-bottom:1px solid #e4eae6;white-space:nowrap";
+
+  const countChip = (n: number) =>
+    n
+      ? `<span style="display:inline-block;font-size:11px;font-weight:700;color:#8c2f26;background:#fbeae8;border-radius:4px;padding:1px 6px;">${n}</span>`
+      : `<span style="font-size:11px;color:#c3ccc7;">&mdash;</span>`;
+
+  const tableHead = `
+      <tr>
+        <th align="left"   style="${TH};padding-left:0;">Project</th>
+        <th align="left"   style="${TH}">Owner</th>
+        <th align="left"   style="${TH}">People involved</th>
+        <th align="left"   style="${TH}">Where it stands</th>
+        <th align="right"  style="${TH}">%</th>
+        <th align="right"  style="${TH}">Due</th>
+        <th align="center" style="${TH};padding-left:3px;padding-right:3px;">Late</th>
+        <th align="center" style="${TH};padding-right:0;padding-left:3px;">Roadblocks</th>
+      </tr>`;
+
+  // Items nobody is assigned to. Worth showing, because nothing is
+  // reminding anyone about them.
+  const unassigned = active.reduce((n, p) => {
+    const ms = p.milestones.flatMap((m) => [m, ...(m.children ?? [])]);
+    return n
+      + ms.filter((m) => !m.done && !m.assignees.length).length
+      + p.tasks.filter((t) => !t.done && !t.assignees.length).length
+      + p.roadblocks.filter((r) => r.status !== "resolved" && !r.owners.length).length;
+  }, 0);
+
   const projectRows = shown.map((p, i) => {
-    const blocked = p.roadblocks.some((r) => r.status !== "resolved");
-    const late = !!p.due_date && p.due_date < today && p.percent < 100;
-    const overdue = p.tasks.filter((t) => !t.done && t.due_date && t.due_date < today).length
-      + p.milestones.flatMap((m) => [m, ...(m.children ?? [])])
-          .filter((m) => !m.done && m.due_date && m.due_date < today).length;
-    const openCount = p.tasks.filter((t) => !t.done).length
-      + p.milestones.flatMap((m) => [m, ...(m.children ?? [])]).filter((m) => !m.done).length;
+    const flat = p.milestones.flatMap((m) => [m, ...(m.children ?? [])]);
+    const overdue =
+      flat.filter((m) => !m.done && m.due_date && m.due_date < today).length +
+      p.tasks.filter((t) => !t.done && t.due_date && t.due_date < today).length;
+    const blocked = p.roadblocks.filter((r) => r.status !== "resolved").length;
+    const dueLate = !!p.due_date && p.due_date < today && p.percent < 100;
     const others = p.members.filter((m) => m.id !== p.owner?.id);
 
-    const chip = (text: string, tone: "red" | "grey") =>
-      `<span style="display:inline-block;font-size:10px;font-weight:700;letter-spacing:.04em;` +
-      (tone === "red"
-        ? `color:#8c2f26;background:#fbeae8;border:1px solid #edc4bf;`
-        : `color:#3d5249;background:#eef1ef;border:1px solid #e2e8e4;`) +
-      `border-radius:4px;padding:2px 7px;margin-right:5px;">${text}</span>`;
+    const edge = i === shown.length - 1 ? "" : "border-bottom:1px solid #f2f5f3;";
+    const cell = `padding:11px 6px;${edge}vertical-align:top;`;
+
+    const ownerCell = p.owner
+      ? `<div style="font-size:11px;color:#3d5249;line-height:1.4;">${esc(p.owner.name)}</div>`
+      : `<div style="font-size:11px;color:#8c2f26;font-style:italic;">no owner</div>`;
+
+    const peopleCell = others.length
+      ? `<div style="font-size:10.5px;color:#8a978f;line-height:1.45;">${esc(others.map((m) => m.name).join(", "))}</div>`
+      : `<div style="font-size:10.5px;color:#c3ccc7;">&mdash;</div>`;
+
+    const dueCell = p.due_date
+      ? (dueLate
+          ? `<span style="font-weight:700;color:#8c2f26;">${formatDateInZone(p.due_date)}</span>`
+          : formatDateInZone(p.due_date))
+      : `<span style="color:#c3ccc7;">&mdash;</span>`;
 
     return `
-      <tr><td style="padding:14px 0;${i === shown.length - 1 ? "" : "border-bottom:1px solid #eef1ef;"}">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-          <tr>
-            <td valign="top">
-              <div style="font-size:13.5px;font-weight:600;color:#16241d;">
-                ${esc(p.title)}
-                ${p.priority ? `<span style="display:inline-block;font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#96540c;background:#fdf0e0;border:1px solid #f2d3ab;border-radius:4px;padding:2px 6px;margin-left:6px;">Priority</span>` : ""}
-              </div>
-              <div style="font-size:11px;color:#6b8177;margin-top:3px;">
-                Owner: <b style="color:#3d5249;">${esc(p.owner?.name ?? "Unassigned")}</b>
-                ${p.due_date ? ` &middot; due ${formatDateInZone(p.due_date)}` : ""}
-              </div>
-              ${others.length
-                ? `<div style="font-size:11px;color:#6b8177;margin-top:2px;">With: ${esc(others.map((m) => m.name).join(", "))}</div>`
-                : ""}
-              ${p.description
-                ? `<div style="font-size:12px;color:#3d5249;margin-top:7px;line-height:1.55;">${esc(p.description)}</div>`
-                : ""}
-              ${p.progress_line
-                ? `<div style="font-size:12px;color:#3d5249;margin-top:7px;line-height:1.6;padding:10px 12px;background:#f4f8f5;border-left:3px solid #3f7a5c;border-radius:0 8px 8px 0;">${esc(p.progress_line)}</div>`
-                : ""}
-              <div style="margin-top:8px;">
-                ${overdue ? chip(`${overdue} OVERDUE`, "red") : ""}
-                ${blocked ? chip(`${p.roadblocks.filter((r) => r.status !== "resolved").length} BLOCKED`, "red") : ""}
-                ${late && !blocked && !overdue ? chip("PAST TARGET", "red") : ""}
-                ${chip(`${p.percent}% &middot; ${openCount} OPEN`, "grey")}
-              </div>
-            </td>
-            <td width="130" align="right" valign="top">${bar(p.percent, blocked)}</td>
-          </tr>
-        </table>
-      </td></tr>`;
+      <tr>
+        <td style="${cell}padding-left:0;width:132px;">
+          <div style="font-size:12.5px;font-weight:600;color:#16241d;line-height:1.3;">${esc(p.title)}</div>
+          ${p.description
+            ? `<div style="font-size:10.5px;color:#8a978f;line-height:1.45;margin-top:4px;">${esc(p.description)}</div>`
+            : ""}
+        </td>
+        <td style="${cell}width:118px;">${ownerCell}</td>
+        <td style="${cell}width:120px;">${peopleCell}</td>
+        <td style="${cell}font-size:11.5px;color:#3d5249;line-height:1.5;">
+          ${p.progress_line ? esc(p.progress_line) : `<span style="color:#c3ccc7;">no read yet</span>`}
+        </td>
+        <td align="right" style="${cell}font-size:12px;font-weight:600;color:#3d5249;white-space:nowrap;">${p.percent}%</td>
+        <td align="right" style="${cell}font-size:11px;color:#6b8177;white-space:nowrap;">${dueCell}</td>
+        <td align="center" style="padding:11px 3px;${edge}vertical-align:top;">${countChip(overdue)}</td>
+        <td align="center" style="padding:11px 0 11px 3px;${edge}vertical-align:top;">${countChip(blocked)}</td>
+      </tr>`;
   }).join("");
+
 
   const roadblockCards = openBlocks.map((r) => {
     const days = Math.max(0, Math.floor((Date.now() - new Date(r.raised_at).getTime()) / 86400000));
@@ -194,8 +223,8 @@ export async function buildDigest() {
 
   const html = `
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#e8eeea;font-family:-apple-system,'Segoe UI',Roboto,sans-serif;">
-<tr><td align="center" style="padding:26px 12px;">
-<table role="presentation" width="660" cellpadding="0" cellspacing="0" style="max-width:660px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;">
+<tr><td align="center" style="padding:26px 10px;">
+<table role="presentation" width="840" cellpadding="0" cellspacing="0" style="max-width:840px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;">
 
   <tr><td style="background:#1d2b23;padding:26px 30px 22px;">
     <div style="font-size:10px;font-weight:700;letter-spacing:.22em;color:#8fc9a8;text-transform:uppercase;">ECE</div>
@@ -206,46 +235,36 @@ export async function buildDigest() {
   <tr><td>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
       <tr>
-        <td width="33.3%" style="padding:20px 10px;text-align:center;border-right:1px solid #eef1ef;border-bottom:1px solid #eef1ef;">
-          <div style="font-size:26px;font-weight:600;color:#16241d;line-height:1;">${active.length}</div>
-          <div style="font-size:11px;color:#6b8177;margin-top:5px;">Active projects</div>
+        <td width="25%" style="padding:16px 6px;text-align:center;border-right:1px solid #eef1ef;border-bottom:1px solid #eef1ef;">
+          <div style="font-size:19px;font-weight:600;color:#16241d;line-height:1;">${active.length}</div>
+          <div style="font-size:9.5px;color:#6b8177;margin-top:3px;letter-spacing:.04em;">ACTIVE</div>
         </td>
-        <td width="33.3%" style="padding:20px 10px;text-align:center;border-right:1px solid #eef1ef;border-bottom:1px solid #eef1ef;">
-          <div style="font-size:26px;font-weight:600;color:${openBlocks.length ? "#b8453a" : "#16241d"};line-height:1;">${openBlocks.length}</div>
-          <div style="font-size:11px;color:#6b8177;margin-top:5px;">Roadblock${openBlocks.length === 1 ? "" : "s"}</div>
+        <td width="25%" style="padding:16px 6px;text-align:center;border-right:1px solid #eef1ef;border-bottom:1px solid #eef1ef;">
+          <div style="font-size:19px;font-weight:600;color:${openBlocks.length ? "#b8453a" : "#16241d"};line-height:1;">${openBlocks.length}</div>
+          <div style="font-size:9.5px;color:#6b8177;margin-top:3px;letter-spacing:.04em;">ROADBLOCKS</div>
         </td>
-        <td width="33.3%" style="padding:20px 10px;text-align:center;border-bottom:1px solid #eef1ef;">
-          <div style="font-size:26px;font-weight:600;color:${overdue.length ? "#d97b1f" : "#16241d"};line-height:1;">${overdue.length}</div>
-          <div style="font-size:11px;color:#6b8177;margin-top:5px;">Overdue</div>
+        <td width="25%" style="padding:16px 6px;text-align:center;border-right:1px solid #eef1ef;border-bottom:1px solid #eef1ef;">
+          <div style="font-size:19px;font-weight:600;color:${overdue.length ? "#d97b1f" : "#16241d"};line-height:1;">${overdue.length}</div>
+          <div style="font-size:9.5px;color:#6b8177;margin-top:3px;letter-spacing:.04em;">OVERDUE</div>
+        </td>
+        <td width="25%" style="padding:16px 6px;text-align:center;border-bottom:1px solid #eef1ef;">
+          <div style="font-size:19px;font-weight:600;color:${unassigned ? "#b8453a" : "#16241d"};line-height:1;">${unassigned}</div>
+          <div style="font-size:9.5px;color:#6b8177;margin-top:3px;letter-spacing:.04em;">UNASSIGNED</div>
         </td>
       </tr>
     </table>
   </td></tr>
 
-  ${ai ? `
-  ${section("This week, in short")}
-  <tr><td style="padding:0 30px;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f8f5;border-left:3px solid #3f7a5c;border-radius:0 10px 10px 0;">
-      <tr><td style="padding:18px 20px;">${renderMarkdown(ai)}</td></tr>
-    </table>
-  </td></tr>` : ""}
 
   ${sections.progress !== false && shown.length ? `
-  ${section("Where each project stands")}
-  <tr><td style="padding:0 30px;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${projectRows}</table>
-    ${hidden > 0 ? `<div style="font-size:11.5px;color:#6b8177;padding-top:12px;">and ${hidden} more on the board</div>` : ""}
+  <tr><td style="padding:16px 18px 6px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+      ${tableHead}${projectRows}
+    </table>
+    ${hidden > 0 ? `<div style="font-size:11px;color:#8a978f;padding-top:10px;">and ${hidden} more on the board</div>` : ""}
   </td></tr>` : ""}
 
-  ${sections.roadblocks !== false && openBlocks.length ? `
-  ${section("Needs your attention")}
-  <tr><td style="padding:0 30px;">${roadblockCards}</td></tr>` : ""}
 
-  ${soon.length ? `
-  ${section("Due in the next seven days")}
-  <tr><td style="padding:0 30px;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${soonRows}</table>
-  </td></tr>` : ""}
 
   <tr><td style="padding:28px 30px 30px;">
     <table role="presentation" cellpadding="0" cellspacing="0">
@@ -257,7 +276,7 @@ export async function buildDigest() {
 
   <tr><td style="background:#f7faf8;padding:16px 30px;border-top:1px solid #eef1ef;">
     <div style="font-size:11px;color:#8a978f;line-height:1.6;">
-      Sent from WFM AI Projects. Change the day, time or recipients in Settings.
+      Sorted worst first. Sent from WFM AI Projects — change the day, time or recipients in Settings.
     </div>
   </td></tr>
 

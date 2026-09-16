@@ -96,6 +96,7 @@ function Inner() {
   const [members, setMembers] = useState<Member[]>([]);
   const [selected, setSelected] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   const [openIds, setOpenIds] = useState<Set<string>>(new Set());
   const [q, setQ] = useState("");
@@ -188,7 +189,13 @@ function Inner() {
       } catch { /* the table still works without it */ }
       setToday(data.today);
       setMembers(team);
-    } catch (e: any) { toast(e.message, "err"); }
+      setLoadError("");
+    } catch (e: any) {
+      // Shown on the page, not just as a toast — a toast disappears before
+      // it can be read, and "nothing matches those filters" would be a lie.
+      setLoadError(e.message ?? "Couldn't load the table.");
+      toast(e.message, "err");
+    }
     setLoading(false);
   }, [toast]);
 
@@ -353,7 +360,11 @@ function Inner() {
                 <tbody>
                   {groups.length === 0 && (
                     <tr><td colSpan={11} className="empty" style={{ padding: 36 }}>
-                      Nothing matches those filters.
+                      {loadError
+                        ? <span style={{ color: "var(--red)" }}>{loadError}</span>
+                        : items.length === 0
+                          ? "No projects found."
+                          : "Nothing matches those filters."}
                     </td></tr>
                   )}
 
